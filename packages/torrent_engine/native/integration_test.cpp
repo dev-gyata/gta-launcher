@@ -5,6 +5,7 @@
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/bencode.hpp>
+#include <libtorrent/alert_types.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -90,13 +91,22 @@ int main(int argc,char** argv) {
     settings.set_bool(lt::settings_pack::enable_lsd,false);
     settings.set_bool(lt::settings_pack::enable_upnp,false);
     settings.set_bool(lt::settings_pack::enable_natpmp,false);
+    settings.set_int(lt::settings_pack::alert_mask,int(static_cast<std::uint32_t>(lt::alert_category::error|lt::alert_category::status)));
+    step("start seed");
     lt::session seed(settings);
     lt::add_torrent_params params;params.ti=info;params.save_path=(root/"seed").string();
     params.flags=lt::torrent_flags::seed_mode;
     auto handle=seed.add_torrent(params);
+    // Wait for the listen socket instead of a fixed poll: Windows runners can take seconds to open it.
     int port=0;
-    for(int i=0;i<100 && port==0;i++) {port=seed.listen_port();std::this_thread::sleep_for(std::chrono::milliseconds(20));}
-    check(port>0,"seed listen port");
+    auto const listen_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(20);
+    while(port==0 && std::chrono::steady_clock::now()<listen_deadline) {
+      seed.wait_for_alert(std::chrono::milliseconds(100));
+      std::vector<lt::alert*> alerts;seed.pop_alerts(&alerts);
+      for(auto a:alerts) if(auto failed=lt::alert_cast<lt::listen_failed_alert>(a)) throw std::runtime_error("seed listen failed: "+failed->message());
+      port=seed.listen_port();
+    }
+    check(port>0,"seed listen port timeout");
     auto magnet=lt::make_magnet_uri(handle)+"&x.pe=127.0.0.1:"+std::to_string(port);
     if(argc>2 && std::string(argv[2])=="--serve") {
       std::cout<<magnet<<std::endl;
