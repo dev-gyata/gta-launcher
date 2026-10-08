@@ -15,6 +15,12 @@
 namespace lt=libtorrent;
 namespace fs=std::filesystem;
 static void check(bool valid,std::string const& message) { if(!valid) throw std::runtime_error(message); }
+// Phase markers on stderr, so a CI timeout shows which step stalled and for how long.
+static void step(char const* name) {
+  static auto const start=std::chrono::steady_clock::now();
+  auto const ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+  std::cerr<<"[step "<<ms<<" ms] "<<name<<std::endl;
+}
 static std::vector<char> pattern(int size,int seed) {
   std::vector<char> bytes(size);
   for(int i=0;i<size;i++) bytes[i]=char((i*31+seed)%251);
@@ -47,7 +53,8 @@ static std::vector<char> read(void* e,int piece) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
   }
-  throw std::runtime_error("piece timeout");
+  throw std::runtime_error("piece "+std::to_string(piece)+" timeout (downloaded "+std::to_string(te_downloaded(e))
+    +" bytes, cached "+std::to_string(te_cached_bytes(e))+" bytes)");
 }
 static fs::path unique_fixture_root() {
   std::random_device random;
@@ -96,6 +103,7 @@ int main(int argc,char** argv) {
       std::string line;std::getline(std::cin,line);
       return 0;
     }
+    step("open engine");
     auto* engine=te_open(magnet.c_str(),(root/"cache").string().c_str());
     check(std::string(te_error(engine)).empty(),te_error(engine));
     check(metadata(engine),"metadata timeout");
@@ -105,20 +113,24 @@ int main(int argc,char** argv) {
     // Metadata is discovered without downloading autonomous payload pieces.
     std::this_thread::sleep_for(std::chrono::milliseconds(200));te_poll(engine);
     check(te_cached_bytes(engine)==0,"unexpected autonomous download");
+    step("request pieces 1 and 2");
     te_request_piece(engine,1);te_request_piece(engine,2);
     auto piece1=read(engine,1),piece2=read(engine,2);
     std::vector<char> whole=a;whole.insert(whole.end(),b.begin(),b.end());
     check(std::equal(piece1.begin(),piece1.end(),whole.begin()+32768),"cross-file piece bytes");
     check(std::equal(piece2.begin(),piece2.end(),whole.begin()+65536),"concurrent piece bytes");
     check(te_cached_bytes(engine)<int64_t(whole.size()),"downloaded full torrent");
+    step("cancel piece 4 and close");
     te_request_piece(engine,4);te_release_piece(engine,4);
     te_close(engine);
     check(fs::exists(root/"cache/resume.dat"),"resume saved");
+    step("reopen offline");
     seed.remove_torrent(handle);
     engine=te_open(magnet.c_str(),(root/"cache").string().c_str());
     check(metadata(engine),"metadata resume offline");
     check(read(engine,1)==piece1,"verified payload resume offline");
     te_close(engine);
+    step("disk usage");
     check(te_disk_usage((root/"cache").string().c_str())>0,"allocated cache usage");
     std::cout<<"PASS metadata, no autonomous payload, concurrent verified cross-file pieces, cancellation, offline resume, disk usage\n";
     fs::remove_all(root);

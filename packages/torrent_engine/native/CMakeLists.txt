@@ -71,4 +71,6 @@ if(TE_BUILD_TESTS)
   add_executable(torrent_engine_integration integration_test.cpp)
   target_link_libraries(torrent_engine_integration PRIVATE torrent_engine torrent-rasterbar)
   add_test(NAME torrent_engine_integration COMMAND torrent_engine_integration)
+  # Alert trace on stderr; ctest --output-on-failure shows it only when the test fails.
+  set_tests_properties(torrent_engine_integration PROPERTIES ENVIRONMENT TORRENT_ENGINE_DEBUG=1)
 endif()
