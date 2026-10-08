@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter analyze
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # flutter test triggers the torrent_engine native hook, which compiles
+      # libtorrent on first run. Cache its incremental outputs across runs.
+      - name: Cache native engine build
+        uses: actions/cache@v4
+        with:
+          path: packages/torrent_engine/.dart_tool/native_build
+          key: torrent-native-Linux-${{ hashFiles('packages/torrent_engine/native/**', 'packages/torrent_engine/hook/build.dart') }}
+          restore-keys: |
+            torrent-native-Linux-
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libssl-dev
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Node (for worker cache test)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter test
+      - run: node test/site/worker_cache_test.cjs
