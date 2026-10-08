@@ -1,0 +1,55 @@
+# Copyright (c) 2026 PlayGTA5. BSD-3-Clause; see LICENSE.
+cmake_minimum_required(VERSION 3.20)
+project(playgta5_torrent_engine LANGUAGES C CXX)
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(static_runtime ON CACHE BOOL "" FORCE)
+endif()
+include(FetchContent)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_STANDARD 17)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(Boost_NO_BOOST_CMAKE ON)
+set(OPENSSL_USE_STATIC_LIBS ON)
+find_package(OpenSSL REQUIRED)
+if(OPENSSL_SSL_LIBRARY MATCHES "\\.(so|dylib)$" OR OPENSSL_CRYPTO_LIBRARY MATCHES "\\.(so|dylib)$")
+  message(FATAL_ERROR "Static OpenSSL libraries are required to bundle HTTPS support")
+endif()
+set(build_tests OFF CACHE BOOL "" FORCE)
+set(build_examples OFF CACHE BOOL "" FORCE)
+set(build_tools OFF CACHE BOOL "" FORCE)
+set(python-bindings OFF CACHE BOOL "" FORCE)
+set(deprecated-functions OFF CACHE BOOL "" FORCE)
+set(logging OFF CACHE BOOL "" FORCE)
+set(i2p OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(boost_headers
+  URL "${CMAKE_CURRENT_SOURCE_DIR}/vendor/boost-1.85.0-headers.tar.gz"
+  URL_HASH SHA256=bed57bbbbd7f4bc72f0ce53dbd08cadccc7b96c81670e4d2b899a267259c2f72)
+FetchContent_MakeAvailable(boost_headers)
+set(BOOST_ROOT "${boost_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+set(Boost_INCLUDE_DIR "${boost_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+FetchContent_Declare(libtorrent
+  URL "${CMAKE_CURRENT_SOURCE_DIR}/vendor/libtorrent-2.0.15.tar.gz"
+  URL_HASH SHA256=5e2e79129823b7ea48721164c32b5aaf83d3fd733b5502100f6705b29f27bb02)
+FetchContent_MakeAvailable(libtorrent)
+add_library(torrent_engine SHARED torrent_engine.cpp)
+target_link_libraries(torrent_engine PRIVATE torrent-rasterbar)
+set_target_properties(torrent_engine PROPERTIES
+  CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+  LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/lib"
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/lib")
+if(APPLE)
+  set_target_properties(torrent_engine PROPERTIES INSTALL_NAME_DIR "@rpath")
+endif()
+option(TE_BUILD_TESTS "Build local peer integration fixture" OFF)
+if(TE_BUILD_TESTS)
+  enable_testing()
+  add_executable(torrent_engine_integration integration_test.cpp)
+  target_link_libraries(torrent_engine_integration PRIVATE torrent_engine torrent-rasterbar)
+  add_test(NAME torrent_engine_integration COMMAND torrent_engine_integration)
+endif()

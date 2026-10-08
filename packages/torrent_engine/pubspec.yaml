@@ -1,0 +1,14 @@
+name: torrent_engine
+description: Bundled libtorrent engine for on-demand verified torrent reads.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.12.0
+dependencies:
+  code_assets: ^1.2.1
+  hooks: '>=2.0.2 <2.1.0'
+  crypto: ^3.0.6
+  ffi: ^2.1.4
+  meta: ^1.18.0
+dev_dependencies:
+  test: ^1.26.0

@@ -1,0 +1,6 @@
+name: torrent_engine_ffi_generator
+publish_to: none
+environment:
+  sdk: ^3.12.0
+dependencies:
+  ffigen: ^23.0.0
