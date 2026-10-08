@@ -25,6 +25,15 @@ jobs:
 
       - run: flutter --version
       - run: flutter pub get
+
+      # The analyzer resolves each package against its own package config,
+      # so the nested packages need their dependencies fetched too
+      # (their .dart_tool/ dirs are gitignored build state).
+      - name: Get nested package dependencies
+        run: |
+          (cd packages/torrent_engine && dart pub get)
+          (cd packages/torrent_engine/tool/ffi_generator && dart pub get)
+
       - run: flutter analyze
 
   test:
