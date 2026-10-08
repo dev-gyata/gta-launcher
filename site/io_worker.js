@@ -88,7 +88,7 @@ function report(n) {
 }
 
 // ---- persistent store --------------------------------------------------------------------------------------------------------------------------------------
-let sh = null, jh = null, storeEnd = 0, journalEnd = 16;
+let sh = null, jh = null, storeEnd = 0, journalEnd = 16, sourceCacheKey = '';
 const index = new Map();		// id * 1048576 + block -> offset in store.bin
 const pendingJournal = [];
 const inflight = new Map();		// same key -> Promise of the run fetching the block
@@ -117,7 +117,7 @@ function indexRun(id, f, a, b, offset, got, fullBytes) {
 async function openStore(version) {
 	try {
 		const root = await navigator.storage.getDirectory();
-		const dir = await root.getDirectoryHandle('gamedata', { create: true });
+		const dir = await root.getDirectoryHandle(sourceCacheKey ? 'gamedata-' + sourceCacheKey : 'gamedata', { create: true });
 		// A reload while the previous page's io worker is still shutting down finds the files locked (sync access handles are exclusive): wait for it to let go.
 		const openHandle = async (name) => {
 			for (let attempt = 0; ; attempt++) {
@@ -585,14 +585,26 @@ async function loop() {
 
 let ready = null;
 async function init(m) {
+	sourceCacheKey = '';
 	base = m.base; bc = new BroadcastChannel('game-progress'); remoteLog = !!m.log; noHints = !!m.noHints;
+	// A missing launcher identity must not let one source reuse another's bytes.
+	let persistentSource = false;
+	try {
+		const response = await fetch(new URL('/__launcher/source.json', base), { cache: 'no-store' });
+		if (response.ok) {
+			const identity = await response.json();
+			if (/^[a-f0-9]{64}$/.test(identity.cacheKey)) { sourceCacheKey = identity.cacheKey; persistentSource = true; }
+		} else if (response.status === 404 && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname)) {
+			persistentSource = true; // Public hosted site without a launcher: retain its original cache.
+		}
+	} catch (_) { /* Identity unavailable: use the memory cache until the next page load. */ }
 	const j = await (await fetchRetry(base + 'manifest.json', { cache: 'no-store' })).json();
 	files = j.files.map((f) => ({ path: f[0], size: f[1] }));
 	dataQuery = j.version ? '?v=' + encodeURIComponent(j.version) : ''; dataVersion = j.version ? String(j.version) : '';
 	files.forEach((f, i) => pathIndex.set(f.path, i));
 	recording = !!m.record; traceOn = !!m.trace;
 	if (remoteLog) startNetStats();
-	if (!m.noStore) await openStore(Number(String(j.version).replace(/\D/g, '')) || 0);
+	if (!m.noStore && persistentSource) await openStore(Number(String(j.version).replace(/\D/g, '')) || 0);
 	if (sh && m.bootset && !m.record) prefetch(m.bootset);
 }
 

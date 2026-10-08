@@ -39,6 +39,10 @@ dependencies:
   url_launcher: ^6.3.3
   path: ^1.9.1
   mime: ^2.1.0
+  crypto: ^3.0.6
+  path_provider: ^2.1.5
+  torrent_engine:
+    path: packages/torrent_engine
   flutter_inappwebview: ^6.1.5
   window_manager: ^0.5.2
 
