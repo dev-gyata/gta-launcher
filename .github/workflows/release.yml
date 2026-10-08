@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to create (e.g. v1.0.0). Leave empty to publish a manual-build-<run> draft."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: playgta5_launcher
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libssl-dev
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+
+      - name: Build Linux release
+        run: flutter build linux --release
+
+      - name: Package Linux bundle
+        run: tar -czf playgta5-launcher-linux-x64.tar.gz -C build/linux/x64/release bundle
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifact
+          path: playgta5-launcher-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install macOS dependencies
+        run: |
+          brew update
+          brew install cmake openssl@3
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+
+      - name: Build macOS release
+        env:
+          FLUTTER_XCODE_ARCHS: arm64
+        run: flutter build macos --release
+
+      # ditto preserves the .app bundle symlinks/resources; plain zip corrupts it.
+      - name: Package macOS app
+        run: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent "${{ env.APP_NAME }}.app" "$GITHUB_WORKSPACE/playgta5-launcher-macos-arm64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifact
+          path: playgta5-launcher-macos-arm64.zip
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install static OpenSSL via vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install openssl:x64-windows-static
+          "OPENSSL_ROOT_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static" >> $env:GITHUB_ENV
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Package Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath playgta5-launcher-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifact
+          path: playgta5-launcher-windows-x64.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Publish binaries to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          # Tag pushes use their own tag; manual runs use the input or a run-scoped fallback.
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version != '' && inputs.version || format('manual-build-{0}', github.run_number) }}
+          draft: ${{ github.ref_type != 'tag' }}
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/playgta5-launcher-linux-x64.tar.gz
+            dist/playgta5-launcher-macos-arm64.zip
+            dist/playgta5-launcher-windows-x64.zip
