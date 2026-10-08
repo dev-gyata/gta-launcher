@@ -18,6 +18,14 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # of the product and file versions while build-number is used as the build suffix.
 version: 1.0.0+1
 
+# Build hooks receive these paths through Dart's supported configuration API.
+# Prepare the matching dependency before building Windows/macOS releases.
+hooks:
+  user_defines:
+    torrent_engine:
+      openssl_root_windows: .dart_tool/native_dependencies/vcpkg/x64-windows-static
+      openssl_root_macos: .dart_tool/native_dependencies/openssl-macos-arm64
+
 environment:
   sdk: ^3.12.0
 
@@ -41,6 +49,9 @@ dependencies:
   mime: ^2.1.0
   crypto: ^3.0.6
   path_provider: ^2.1.5
+  # Foundation 2.6 uses a native asset that Flutter builds for macOS 13.
+  # Keep the plugin implementation to preserve this app's macOS 12 minimum.
+  path_provider_foundation: '>=2.5.1 <2.6.0'
   torrent_engine:
     path: packages/torrent_engine
   flutter_inappwebview: ^6.1.5

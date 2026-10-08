@@ -12,3 +12,9 @@ dependencies:
   meta: ^1.18.0
 dev_dependencies:
   test: ^1.26.0
+
+hooks:
+  user_defines:
+    torrent_engine:
+      openssl_root_windows: ../../.dart_tool/native_dependencies/vcpkg/x64-windows-static
+      openssl_root_macos: ../../.dart_tool/native_dependencies/openssl-macos-arm64
