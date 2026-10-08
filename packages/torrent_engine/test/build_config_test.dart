@@ -44,7 +44,7 @@ void main() {
       containsAll([
         '-A',
         'x64',
-        '-DOPENSSL_ROOT_DIR=${temporary.path}/deps/windows-static/',
+        '-DOPENSSL_ROOT_DIR=${temporary.uri.resolve('deps/windows-static/').toFilePath()}',
       ]),
     );
   });
