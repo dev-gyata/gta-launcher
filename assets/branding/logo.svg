@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- playgta5 Launcher mark: a play triangle whose left side is three bars streaming in, for a launcher that streams game data into play.
+       Original artwork; tool/branding/render_icons.sh turns it into the app icons. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b3423"/>
+      <stop offset="1" stop-color="#0d1810"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f8a5c" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#4f8a5c" stop-opacity=".15"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a6e39c"/>
+      <stop offset="1" stop-color="#5fb85f"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7cc576" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#7cc576" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#9ade90"/>
+    </linearGradient>
+    <!-- the two gaps that split the triangle's left side into bars; the tip stays solid -->
+    <mask id="cuts">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <rect x="180" y="414" width="400" height="30" fill="#000"/>
+      <rect x="180" y="580" width="400" height="30" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#tile)"/>
+  <rect x="38" y="38" width="948" height="948" rx="210" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  <g mask="url(#cuts)">
+    <!-- three equal bars (278-414, 444-580, 610-746) ending under the triangle's left edge -->
+    <rect x="318" y="278" width="144" height="136" rx="30" fill="url(#trail)"/>
+    <rect x="228" y="444" width="234" height="136" rx="30" fill="url(#trail)"/>
+    <rect x="278" y="610" width="184" height="136" rx="30" fill="url(#trail)"/>
+    <path d="M440 300 L776 512 L440 724 Z" fill="url(#mark)" stroke="url(#mark)" stroke-width="44" stroke-linejoin="round"/>
+  </g>
+</svg>

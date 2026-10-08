@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="playgta5 Launcher logo" width="96">
+
 # playgta5 Launcher
 
 [![Release](https://github.com/dev-gyata/gta-launcher/actions/workflows/release.yml/badge.svg)](https://github.com/dev-gyata/gta-launcher/actions/workflows/release.yml)
