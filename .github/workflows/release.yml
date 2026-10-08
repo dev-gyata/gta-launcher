@@ -30,6 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -64,10 +67,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
+
+      - name: Restore macOS OpenSSL
+        id: openssl
+        uses: actions/cache/restore@v4
+        with:
+          path: .dart_tool/native_dependencies/openssl-macos-arm64
+          key: openssl-v1-macos-arm64-12-${{ env.CI_RUNNER_IMAGE }}-${{ hashFiles('tool/release/build_openssl_macos.sh', 'tool/release/verify_macos.py') }}
+
       - name: Install macOS dependencies
         run: |
           command -v cmake || brew install cmake
-          bash tool/release/build_openssl_macos.sh
+          if [[ '${{ steps.openssl.outputs.cache-hit }}' != 'true' ]]; then
+            bash tool/release/build_openssl_macos.sh
+          fi
+          python3 tool/release/verify_macos.py --openssl .dart_tool/native_dependencies/openssl-macos-arm64
+
+      # Save dependencies before app verification so a later failure does not
+      # force another OpenSSL compilation on the next run.
+      - name: Save macOS OpenSSL
+        if: steps.openssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .dart_tool/native_dependencies/openssl-macos-arm64
+          key: ${{ steps.openssl.outputs.cache-primary-key }}
+
+      - name: Cache CocoaPods downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('macos/Podfile.lock', 'pubspec.lock') }}
+          restore-keys: pods-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
@@ -114,12 +148,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
+
+      - name: Restore Windows OpenSSL
+        id: openssl
+        uses: actions/cache/restore@v4
+        with:
+          path: .dart_tool/native_dependencies/vcpkg
+          key: openssl-v1-windows-x64-static-MT-${{ env.CI_RUNNER_IMAGE }}-${{ hashFiles('.github/workflows/release.yml') }}
+
       - name: Install static OpenSSL via vcpkg
+        if: steps.openssl.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $installRoot = Join-Path $PWD '.dart_tool/native_dependencies/vcpkg'
           vcpkg install openssl:x64-windows-static "--x-install-root=$installRoot"
           if ($LASTEXITCODE -ne 0) { throw 'Static OpenSSL installation failed' }
+
+      - name: Save Windows OpenSSL
+        if: steps.openssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .dart_tool/native_dependencies/vcpkg
+          key: ${{ steps.openssl.outputs.cache-primary-key }}
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2

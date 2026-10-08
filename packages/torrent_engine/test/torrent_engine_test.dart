@@ -34,9 +34,18 @@ void main() {
     final cache = await Directory.systemTemp.createTemp('torrent-usage-');
     final outside = await Directory.systemTemp.createTemp('torrent-outside-');
     try {
-      final sparse = await File(
-        '${cache.path}/sparse',
-      ).open(mode: FileMode.write);
+      final sparseFile = File('${cache.path}/sparse');
+      await sparseFile.create();
+      if (Platform.isWindows) {
+        // NTFS does not create holes on truncate unless the file is marked sparse.
+        final result = await Process.run('fsutil', [
+          'sparse',
+          'setflag',
+          sparseFile.path,
+        ]);
+        expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
+      }
+      final sparse = await sparseFile.open(mode: FileMode.write);
       await sparse.truncate(128 * 1024 * 1024);
       await sparse.writeFrom(List.filled(4096, 5));
       await sparse.close();
