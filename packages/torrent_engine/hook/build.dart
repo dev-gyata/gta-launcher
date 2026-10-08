@@ -83,6 +83,7 @@ Future<void> main(List<String> args) async {
         native.resolve('CMakeLists.txt'),
         native.resolve('torrent_engine.cpp'),
         native.resolve('torrent_engine.h'),
+        native.resolve('torrent_path.h'),
         native.resolve('vendor/boost-1.85.0-headers.tar.gz'),
         native.resolve('vendor/libtorrent-2.0.15.tar.gz'),
       ]);
