@@ -4,15 +4,13 @@
 
 A desktop app for Windows, macOS and Linux that serves local folders, remote HTTP mirrors, and magnet-linked torrents through a localhost game server. It replaces running `serve_local.py` / `Launch-Local.cmd` by hand, and it doesn't need Python.
 
+> **Disclaimer:** This is an unofficial, independent project. It is not affiliated with, endorsed by, or sponsored by any game publisher or developer, and all trademarks belong to their respective owners. The launcher does not include the game engine, game data, or game artwork. You are responsible for only loading files you have the legal right to use.
+
 ## Screenshots
 
 ![macOS launcher showing Local, HTTP and Magnet source controls, torrent cache usage, and an invalid local folder warning](docs/screenshots/launcher.png)
 
 Launcher on macOS. The selected local folder is invalid, so Start is disabled until a compatible mirror is chosen.
-
-![Game loading inside the macOS launcher with Launcher, Reload, Open in browser and Full screen controls](docs/screenshots/in-app-playback.png)
-
-In-app playback on macOS, showing the game loading screen.
 
 ## Downloads
 
@@ -26,7 +24,7 @@ Grab the latest binaries from [GitHub Releases](https://github.com/dev-gyata/gta
 
 Every `v*` tag (e.g. `v1.0.0`) builds all three OS binaries in CI and attaches them to that tag's release. Manual runs from the Actions tab build and upload artifacts without publishing by default; enable `publish` explicitly to publish a draft release.
 
-The site's web files (`index.html`, `loader.js`, `game.js`, the workers and manifests) come with the launcher in `site/`. The game engine and its data don't. Supply a local folder, HTTP mirror, or torrent containing `playgta5.com/b/8b0b5899ed/game.wasm` and `playgta5.com/data/`. Wherever a file exists in both places, the launcher's copy in `site/` is used.
+The site's web files (`index.html`, `loader.js`, `game.js`, the workers and manifests) come with the launcher in `site/`. No game engine or game data is included or distributed with the launcher. To play, point it at a local folder, HTTP mirror, or torrent of files you are entitled to use, containing `playgta5.com/b/8b0b5899ed/game.wasm` and `playgta5.com/data/`. Wherever a file exists in both places, the launcher's copy in `site/` is used.
 
 ## Platform setup
 
@@ -66,7 +64,7 @@ Torrents may contain an unpacked mirror or a ZIP archive with the same files. If
 
 Torrent pieces, resume state, and verified extracted entries persist in the application's support directory under `torrent-cache/`. The cache display reports allocated disk space, including sparse payloads, and **Clear torrent cache** removes it while stopped. There is no automatic eviction. Stopping closes peer connections and leaves cached data for the next launch. Browser data caches are isolated by source and mirror root.
 
-The sample hash `57a4193cc3d3f069ce436fcda040ed4c705b76c7` and all seven supplied trackers are covered by the magnet-normalization test. Automated checks use generated fixture torrents and local seeders rather than relying on that torrent's live availability.
+Automated checks use generated fixture torrents and local seeders, not public torrents.
 
 The game screen has buttons for **Launcher** (back), **Reload**, **Open in browser** and **Full screen**. You can switch the **Play in app** toggle off to always use the browser instead.
 
