@@ -234,14 +234,65 @@ const act = (a) => {
 	else { pickingMap = a === 'sandbox'; showModes(); }		// Sandbox Mode (or its loading item: change the map) asks for the map; Back closes that
 };
 modesEl.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && !b.hidden) act(b.dataset.act); });
-addEventListener('keydown', (e) => {
-	if (startCommitted || e.ctrlKey || e.altKey || e.metaKey || !document.getElementById('loading')) return;
-	const b = modeButtons.find((x) => !x.hidden && ACTS[x.dataset.act][2].includes(e.code));
-	if (!b) return;
+// The start menu's key for a KeyboardEvent.code: true when it took the key (the controller below uses it too)
+const titleKey = (code) => {
+	if (startCommitted || !document.getElementById('loading')) return false;
+	const b = modeButtons.find((x) => !x.hidden && ACTS[x.dataset.act][2].includes(code));
+	if (!b) return false;
 	act(b.dataset.act);
+	return true;
+};
+addEventListener('keydown', (e) => {
+	if (e.ctrlKey || e.altKey || e.metaKey || !titleKey(e.code)) return;
 	e.preventDefault(); e.stopImmediatePropagation();
 }, { capture: true });
 showModes();
+// ---- controller: the engine has no gamepad input (WasmInputBlock carries only keyboard, mouse and text; game.wasm imports no gamepad or XInput
+// bridge), so the Gamepad API is translated into the keys and mouse movement of the game's PC bindings (data/x64/data/control/default.meta and
+// fixed.meta). Movement is digital (the left stick presses W/A/S/D), prompts stay keyboard glyphs and there is no rumble. ?pad=0 turns it off,
+// ?padsens= scales the right stick.
+let padSink = null, padName = '';		// padSink: installInput's hooks into the input block, once the engine has published it
+if (q.get('pad') !== '0' && navigator.getGamepads) {
+	// Keys per standard-mapping button. A: sprint, and accept in menus/phone. B: reload/light melee, and back. X: jump/handbrake. Y: enter/exit vehicle.
+	// LB: weapon wheel. RB: cover. LT/RT (6/7) are the right/left mouse buttons (aim/attack). Back: camera. Start: pause. L3: duck/stealth. R3: look behind.
+	// D-pad: arrows (phone, menus, radio).
+	const PAD_KEYS = [['ShiftLeft', 'Enter'], ['KeyR', 'Backspace'], ['Space'], ['KeyF'], ['Tab'], ['KeyQ'], null, null,
+		['KeyV'], ['Escape'], ['ControlLeft'], ['KeyC'], ['ArrowUp'], ['ArrowDown'], ['ArrowLeft'], ['ArrowRight']];
+	const PAD_TITLE = { 0: 'Enter', 1: 'Backspace', 2: 'Space' };		// start menu: A = Story Mode, X = Sandbox Mode, B = back
+	const LOOK = Math.max(0.1, Number(q.get('padsens')) || 1) * 900;		// mouse pixels per second at full right-stick deflection
+	const deadZone = (x, y) => { const m = Math.hypot(x, y); if (m <= 0.2) return [0, 0, 0]; const r = Math.min(1, (m - 0.2) / 0.8); return [x / m * r, y / m * r, r]; };
+	let prev = [], taken = new Set(), last = 0, restX = 0, restY = 0;		// taken: buttons the start menu took, ignored until released
+	const poll = (now) => {
+		requestAnimationFrame(poll);
+		const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+		last = now;
+		const gp = [...navigator.getGamepads()].find((p) => p && p.connected);
+		if (!gp) {
+			if (padName) { postLog('[page input] controller disconnected: ' + padName); padName = ''; prev = []; taken.clear(); padSink?.release(); }
+			return;
+		}
+		if (gp.id !== padName) { padName = gp.id; postLog('[page input] controller connected: ' + gp.id + ' (mapping ' + (gp.mapping || 'none') + ')'); }
+		if (padSink && !padSink.focused()) { prev = []; taken.clear(); padSink.release(); return; }
+		const down = gp.buttons.map((b, i) => (i === 6 || i === 7 ? b.value > 0.3 : b.pressed));
+		down.forEach((d, i) => { if (!d) taken.delete(i); else if (!prev[i] && PAD_TITLE[i] && titleKey(PAD_TITLE[i])) taken.add(i); });
+		prev = down;
+		if (!padSink) return;
+		const vks = new Set();
+		down.forEach((d, i) => { if (d && !taken.has(i)) for (const code of PAD_KEYS[i] || []) vks.add(VK[code]); });
+		const [lx, ly] = deadZone(gp.axes[0] || 0, gp.axes[1] || 0);
+		if (ly < -0.35) vks.add(VK.KeyW);
+		if (ly > 0.35) vks.add(VK.KeyS);
+		if (lx < -0.35) vks.add(VK.KeyA);
+		if (lx > 0.35) vks.add(VK.KeyD);
+		const btn = (down[7] && !taken.has(7) ? 1 : 0) | (down[6] && !taken.has(6) ? 2 : 0);		// input block bits: 1 = left (attack), 2 = right (aim)
+		const [rx, ry, r] = deadZone(gp.axes[2] || 0, gp.axes[3] || 0);
+		restX += rx * r * LOOK * dt; restY += ry * r * LOOK * dt;		// squared response: fine aim near the centre, fast turns at the edge
+		const dx = Math.trunc(restX), dy = Math.trunc(restY);
+		restX -= dx; restY -= dy;
+		padSink.apply(vks, btn, dx, dy);
+	};
+	requestAnimationFrame(poll);
+}
 // ---- loading progress: the engine (prejs.js, loader.js) and the GPU worker publish {pct, label} on a BroadcastChannel ------------------
 {
 	const loading = document.getElementById('loading'), fill = document.getElementById('fill'), label = document.getElementById('label'), pct = document.getElementById('pct');
@@ -272,7 +323,7 @@ showModes();
 		if (m.choice && !startMode) { waitingChoice = true; modesEl.classList.add('ask'); showModes(); }		// the engine waits for the choice: showModes asks for it in the label
 		if (m.commit) { startCommitted = true; pickingMap = false; if (m.mode) startMode = m.mode; showModes(); }		// the engine took the choice
 		if (m.compiling !== undefined && !waitingChoice) { label.textContent = lastLabel = 'Preparing shaders'; target = Math.max(target, 99); }		// the world is up; the GPU worker holds it until its pipelines are compiled
-		if (m.world) { ready = true; hud.textContent = 'click the game to capture the mouse (Esc releases it, Shift+P switches keyboard mode, = shows FPS)'; setTimeout(() => { hud.textContent = ''; }, 15000); }
+		if (m.world) { ready = true; hud.textContent = 'click the game to capture the mouse (Esc releases it, Shift+P switches keyboard mode, = shows FPS)' + (padName ? '. Controller connected' : ''); setTimeout(() => { hud.textContent = ''; }, 15000); }
 	};
 	// Between reports the bar creeps forward (at most 6 points past the last report) so a long stage does not look frozen.
 	const dataEl = document.getElementById('data');
@@ -534,13 +585,18 @@ function installInput(memory, block) {
 	// and U/O (target left/right) press the same keys for the engine; the real numpad keeps working.
 	const FLY_ALIAS = { KeyI: 'Numpad8', KeyK: 'Numpad2', KeyJ: 'Numpad4', KeyL: 'Numpad6', KeyU: 'Numpad7', KeyO: 'Numpad9' };
 	const held = new Set();
+	// A key or mouse button is down while the keyboard/mouse or the controller holds it, so releasing one does not cancel the other
+	const kbdVK = new Set(), padVK = new Set();
+	let mouseBtn = 0, padBtn = 0;
+	const syncKey = (vk) => Atomics.store(keys, vk, kbdVK.has(vk) || padVK.has(vk) ? 0x80 : 0);
+	const syncBtn = () => Atomics.store(w, BTN, mouseBtn | padBtn);
 	const syncFlyAlias = () => { for (const [src, target] of Object.entries(FLY_ALIAS)) Atomics.store(keys, VK[target], held.has(src) || held.has(target) ? 0x80 : 0); };
 	addEventListener('keydown', (e) => {
 		if (passThrough(e)) return;
 		e.preventDefault();
 		const vk = VK[e.code];
 		if (!e.repeat) trace('keydown ' + e.code + ' vk=' + (vk || 'UNMAPPED') + ' hasFocus=' + document.hasFocus() + ' engineFocus=' + Atomics.load(w, FOCUS));
-		if (vk) Atomics.store(keys, vk, 0x80);
+		if (vk) { kbdVK.add(vk); syncKey(vk); }
 		held.add(e.code); syncFlyAlias();
 		if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
 			const head = Atomics.load(w, HEAD);
@@ -554,20 +610,20 @@ function installInput(memory, block) {
 		if (passThrough(e)) return;
 		e.preventDefault();
 		const vk = VK[e.code];
-		if (vk) Atomics.store(keys, vk, 0);
+		if (vk) { kbdVK.delete(vk); syncKey(vk); }
 		held.delete(e.code); syncFlyAlias();
 	});
-	const releaseAll = () => { held.clear(); for (let i = 0; i < 256; i++) Atomics.store(keys, i, 0); Atomics.store(w, BTN, 0); };
+	const releaseAll = () => { held.clear(); kbdVK.clear(); padVK.clear(); mouseBtn = padBtn = 0; for (let i = 0; i < 256; i++) Atomics.store(keys, i, 0); Atomics.store(w, BTN, 0); };
 	addEventListener('focus', () => { trace('window focus'); Atomics.store(w, FOCUS, 1); });
 	addEventListener('blur', () => { trace('window blur (all keys released)'); Atomics.store(w, FOCUS, 0); releaseAll(); });
 
 	const locked = () => document.pointerLockElement === canvas;
 	canvas.addEventListener('mousedown', (e) => {
 		if (!locked()) { canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => canvas.requestPointerLock()); }
-		Atomics.or(w, BTN, 1 << [0, 2, 1, 3, 4][e.button]);
+		mouseBtn |= 1 << [0, 2, 1, 3, 4][e.button]; syncBtn();
 		e.preventDefault();
 	});
-	addEventListener('mouseup', (e) => { Atomics.and(w, BTN, ~(1 << [0, 2, 1, 3, 4][e.button])); });
+	addEventListener('mouseup', (e) => { mouseBtn &= ~(1 << [0, 2, 1, 3, 4][e.button]); syncBtn(); });
 	addEventListener('contextmenu', (e) => e.preventDefault());
 	document.addEventListener('pointerlockchange', () => { trace('pointer lock ' + (locked() ? 'on' : 'off')); Atomics.store(w, LOCKED, locked() ? 1 : 0); });
 	addEventListener('mousemove', (e) => {
@@ -597,6 +653,23 @@ function installInput(memory, block) {
 		const n = Math.trunc(wheelAccum);
 		if (n) { wheelAccum -= n; Atomics.add(w, DZ, n); }
 	}, { passive: false });
+
+	// The controller loop (see "controller" above) drives these: the keys and buttons it holds this frame, and right-stick look as mouse movement
+	padSink = {
+		focused: () => Atomics.load(w, FOCUS) === 1,
+		release: () => { const was = [...padVK]; padVK.clear(); was.forEach(syncKey); padBtn = 0; syncBtn(); },
+		apply: (vks, btn, dx, dy) => {
+			for (const vk of [...padVK]) if (!vks.has(vk)) { padVK.delete(vk); syncKey(vk); }
+			for (const vk of vks) if (!padVK.has(vk)) { padVK.add(vk); syncKey(vk); }
+			if (btn !== padBtn) { padBtn = btn; syncBtn(); }
+			if (dx || dy) {
+				Atomics.add(w, DX, dx);
+				Atomics.add(w, DY, dy);
+				Atomics.store(w, MX, Math.max(0, Math.min(W - 1, Atomics.load(w, MX) + dx)));
+				Atomics.store(w, MY, Math.max(0, Math.min(H - 1, Atomics.load(w, MY) + dy)));
+			}
+		},
+	};
 }
 </script>
 </body>

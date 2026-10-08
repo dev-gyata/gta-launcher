@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="playgta5 Launcher logo" width="96">
+
 # playgta5 Launcher
 
 [![Release](https://github.com/dev-gyata/gta-launcher/actions/workflows/release.yml/badge.svg)](https://github.com/dev-gyata/gta-launcher/actions/workflows/release.yml)
@@ -69,6 +71,26 @@ Automated checks use generated fixture torrents and local seeders, not public to
 The game screen has buttons for **Launcher** (back), **Reload**, **Open in browser** and **Full screen**. You can switch the **Play in app** toggle off to always use the browser instead.
 
 If the webview can't run the game, a banner appears with an Open in browser button. The app remembers the source choice, separate values for each source, port, and play mode. Saved folder settings from earlier versions remain usable. If the port is busy, it uses a free one and shows the address.
+
+### Controller
+
+Xbox, PlayStation and other standard controllers work in the launcher window and in the browser. The game engine only reads keyboard and mouse, so the page translates the controller into the game's PC controls:
+
+| Controller | Action | Sends |
+| --- | --- | --- |
+| Left stick | Move / steer, accelerate, brake | W A S D |
+| Right stick | Camera | Mouse movement |
+| LT / RT | Aim / shoot | Right / left mouse button |
+| A | Sprint; accept in menus and phone | Shift + Enter |
+| B | Reload, light melee; back in menus | R + Backspace |
+| X | Jump / handbrake | Space |
+| Y | Enter or exit vehicle | F |
+| LB / RB | Weapon wheel / cover | Tab / Q |
+| L3 / R3 | Stealth / look behind | Ctrl / C |
+| Back / Start | Camera view / pause menu | V / Esc |
+| D-pad | Phone, menus, radio | Arrow keys |
+
+On the start screen, A picks Story Mode, X picks Sandbox Mode and B goes back. Limitations: movement and triggers are on/off rather than analog, on-screen prompts show keyboard keys, and there is no vibration. Add `?padsens=1.5` to the game URL to change camera speed, or `?pad=0` to turn the controller off.
 
 ## Build
 
