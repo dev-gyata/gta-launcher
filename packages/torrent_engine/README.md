@@ -24,8 +24,13 @@ The Dart native asset hook builds and automatically bundles one self-contained
 shared library on macOS, Windows and Linux. No installed torrent application is
 used. Builds require CMake >=3.20, a C++17 toolchain, and **static OpenSSL**
 development libraries. Missing OpenSSL fails the build; HTTPS trackers remain
-supported. Set `OPENSSL_ROOT_DIR` when CMake cannot discover the installation.
-Set `TORRENT_ENGINE_CMAKE` to locate CMake outside PATH.
+supported. Flutter/Dart hooks read `openssl_root_windows` and `openssl_root_macos` from
+`hooks.user_defines.torrent_engine` in the invoking package's pubspec. Paths
+resolve relative to that pubspec; the repository stages dependencies under
+`.dart_tool/native_dependencies/`. Use `cmake_executable` for a custom CMake
+executable. Dart filters arbitrary environment variables, so `OPENSSL_ROOT_DIR`
+and `TORRENT_ENGINE_CMAKE` alone are not hook configuration. Standalone CMake
+accepts `-DOPENSSL_ROOT_DIR=...`.
 
 - macOS: Xcode command line tools, CMake, OpenSSL (`brew openssl@3` includes
   static archives). For distribution, build OpenSSL for the app's minimum macOS
@@ -34,8 +39,8 @@ Set `TORRENT_ENGINE_CMAKE` to locate CMake outside PATH.
 - Linux: CMake, GCC/Clang, static libssl/libcrypto development archives (typically
   `libssl-dev`); use the build host matching your target architecture.
 - Windows: Visual Studio C++ tools, CMake, Perl if needed by OpenSSL, static
-  OpenSSL from vcpkg's `x64-windows-static`/`arm64-windows-static` triplet. Expose
-  its installation through `OPENSSL_ROOT_DIR`.
+  OpenSSL from vcpkg's `x64-windows-static`/`arm64-windows-static` triplet. Configure
+  its installation through `openssl_root_windows`; the engine uses `/MT`.
 
 The package .dart_tool/native_build directory retains CMake outputs across repeated
 Flutter runs; a lock serializes concurrent builds. Sources are vendored and

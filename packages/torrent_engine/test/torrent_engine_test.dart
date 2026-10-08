@@ -34,12 +34,28 @@ void main() {
     final cache = await Directory.systemTemp.createTemp('torrent-usage-');
     final outside = await Directory.systemTemp.createTemp('torrent-outside-');
     try {
-      final sparse = await File(
-        '${cache.path}/sparse',
-      ).open(mode: FileMode.write);
-      await sparse.truncate(128 * 1024 * 1024);
+      const size = 128 * 1024 * 1024;
+      final sparseFile = File('${cache.path}/sparse');
+      final sparse = await sparseFile.open(mode: FileMode.write);
       await sparse.writeFrom(List.filled(4096, 5));
+      await sparse.truncate(size);
       await sparse.close();
+      expect(await sparseFile.length(), size);
+      if (Platform.isWindows) {
+        // Mark the finished fixture, then deallocate its zero-filled range.
+        // Opening with O_TRUNC can clear the sparse attribute on Windows.
+        for (final arguments in [
+          ['sparse', 'setflag', sparseFile.path],
+          ['sparse', 'setrange', sparseFile.path, '4096', '${size - 4096}'],
+        ]) {
+          final result = await Process.run('fsutil', arguments);
+          expect(
+            result.exitCode,
+            0,
+            reason: '${result.stdout}${result.stderr}',
+          );
+        }
+      }
       final bytes = await TorrentEngine.cacheDiskUsage(cache.path);
       expect(bytes, greaterThan(0));
       expect(bytes, lessThan(128 * 1024 * 1024));

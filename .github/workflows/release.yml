@@ -6,13 +6,18 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      publish:
+        description: "Publish a draft release after verification (false only builds and uploads artifacts)."
+        type: boolean
+        required: false
+        default: false
       version:
         description: "Release tag to create (e.g. v1.0.0). Leave empty to publish a manual-build-<run> draft."
         required: false
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   APP_NAME: playgta5_launcher
@@ -24,6 +29,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
 
       - name: Install Linux dependencies
         run: |
@@ -59,11 +67,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
+
+      - name: Restore macOS OpenSSL
+        id: openssl
+        uses: actions/cache/restore@v4
+        with:
+          path: .dart_tool/native_dependencies/openssl-macos-arm64
+          key: openssl-v1-macos-arm64-12-${{ env.CI_RUNNER_IMAGE }}-${{ hashFiles('tool/release/build_openssl_macos.sh', 'tool/release/verify_macos.py') }}
+
       - name: Install macOS dependencies
         run: |
-          brew update
-          brew install cmake openssl@3
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          command -v cmake || brew install cmake
+          if [[ '${{ steps.openssl.outputs.cache-hit }}' != 'true' ]]; then
+            bash tool/release/build_openssl_macos.sh
+          fi
+          python3 tool/release/verify_macos.py --openssl .dart_tool/native_dependencies/openssl-macos-arm64
+
+      # Save dependencies before app verification so a later failure does not
+      # force another OpenSSL compilation on the next run.
+      - name: Save macOS OpenSSL
+        if: steps.openssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .dart_tool/native_dependencies/openssl-macos-arm64
+          key: ${{ steps.openssl.outputs.cache-primary-key }}
+
+      - name: Cache CocoaPods downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('macos/Podfile.lock', 'pubspec.lock') }}
+          restore-keys: pods-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
@@ -75,16 +113,25 @@ jobs:
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
 
+      - name: Verify native engine and Dart worker on macOS
+        run: bash tool/release/verify_macos.sh
+
       - name: Build macOS release
         env:
           FLUTTER_XCODE_ARCHS: arm64
         run: flutter build macos --release
+
+      - name: Verify packaged macOS app
+        run: python3 tool/release/verify_macos.py --app "build/macos/Build/Products/Release/${{ env.APP_NAME }}.app"
 
       # ditto preserves the .app bundle symlinks/resources; plain zip corrupts it.
       - name: Package macOS app
         run: |
           cd build/macos/Build/Products/Release
           ditto -c -k --sequesterRsrc --keepParent "${{ env.APP_NAME }}.app" "$GITHUB_WORKSPACE/playgta5-launcher-macos-arm64.zip"
+          cd "$GITHUB_WORKSPACE"
+          ditto -x -k playgta5-launcher-macos-arm64.zip .dart_tool/macos-extracted
+          python3 tool/release/verify_macos.py --app ".dart_tool/macos-extracted/${{ env.APP_NAME }}.app"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,11 +148,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
+
+      - name: Restore Windows OpenSSL
+        id: openssl
+        uses: actions/cache/restore@v4
+        with:
+          path: .dart_tool/native_dependencies/vcpkg
+          key: openssl-v1-windows-x64-static-MT-${{ env.CI_RUNNER_IMAGE }}-${{ hashFiles('.github/workflows/release.yml') }}
+
       - name: Install static OpenSSL via vcpkg
+        if: steps.openssl.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          vcpkg install openssl:x64-windows-static
-          "OPENSSL_ROOT_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static" >> $env:GITHUB_ENV
+          $installRoot = Join-Path $PWD '.dart_tool/native_dependencies/vcpkg'
+          vcpkg install openssl:x64-windows-static "--x-install-root=$installRoot"
+          if ($LASTEXITCODE -ne 0) { throw 'Static OpenSSL installation failed' }
+
+      - name: Save Windows OpenSSL
+        if: steps.openssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .dart_tool/native_dependencies/vcpkg
+          key: ${{ steps.openssl.outputs.cache-primary-key }}
 
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
@@ -117,12 +183,29 @@ jobs:
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
 
+      - name: Verify native engine and Dart worker on Windows
+        shell: pwsh
+        run: ./tool/release/verify_windows.ps1
+
       - name: Build Windows release
-        run: flutter build windows --release
+        shell: pwsh
+        run: |
+          flutter build windows --release 2>&1 | Tee-Object -FilePath .dart_tool/windows-release.log
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
+          if (Select-String -Path .dart_tool/windows-release.log -Pattern 'LNK4098|LNK2038|LNK2005|conflicts with use of other libs|mismatch detected for .RuntimeLibrary') {
+            throw 'The release build reports conflicting C/C++ runtimes.'
+          }
+
+      - name: Verify packaged Windows app
+        shell: pwsh
+        run: ./tool/release/verify_windows_bundle.ps1 -Bundle build/windows/x64/runner/Release
 
       - name: Package Windows build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath playgta5-launcher-windows-x64.zip
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath playgta5-launcher-windows-x64.zip
+          Expand-Archive playgta5-launcher-windows-x64.zip .dart_tool/windows-extracted
+          ./tool/release/verify_windows_bundle.ps1 -Bundle .dart_tool/windows-extracted
 
       - uses: actions/upload-artifact@v4
         with:
@@ -132,8 +215,11 @@ jobs:
 
   release:
     name: Publish GitHub Release
+    if: github.ref_type == 'tag' || inputs.publish == true
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

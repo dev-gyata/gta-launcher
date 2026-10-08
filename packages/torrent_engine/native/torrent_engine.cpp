@@ -1,5 +1,6 @@
 // Copyright (c) 2026 PlayGTA5. BSD-3-Clause; see LICENSE.
 #include "torrent_engine.h"
+#include "torrent_path.h"
 #include <libtorrent/session.hpp>
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/alert_types.hpp>
@@ -35,13 +36,6 @@ struct Engine {
   std::set<int> requested;
 };
 static Engine& engine(void* p) { return *static_cast<Engine*>(p); }
-static bool safe_path(std::string const& name) {
-  if (name.empty() || name.find('\\') != std::string::npos || name.find(':') != std::string::npos) return false;
-  auto p = fs::u8path(name);
-  if (p.is_absolute()) return false;
-  for (auto const& part : p) if (part == "." || part == ".." || part.empty()) return false;
-  return true;
-}
 static void metadata(Engine& e) {
   e.info = e.torrent.torrent_file();
   if (!e.info) return;
@@ -50,8 +44,13 @@ static void metadata(Engine& e) {
   auto const& files = e.info->files();
   e.paths.resize(files.num_files());
   for (auto i : files.file_range()) {
-    auto name = files.file_path(i);
-    if (!safe_path(name) || (files.file_flags(i) & lt::file_storage::flag_symlink))
+#ifdef _WIN32
+    constexpr bool windows_separators = true;
+#else
+    constexpr bool windows_separators = false;
+#endif
+    auto name = te::portable_path(files.file_path(i), windows_separators);
+    if (!te::safe_path(name) || (files.file_flags(i) & lt::file_storage::flag_symlink))
       throw std::runtime_error("Torrent metadata contains an unsafe file path or symlink");
     auto current = fs::u8path(e.payload);
     for (auto const& part : fs::u8path(name)) {

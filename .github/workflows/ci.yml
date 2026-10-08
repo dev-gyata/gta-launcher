@@ -43,15 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # flutter test triggers the torrent_engine native hook, which compiles
-      # libtorrent on first run. Cache its incremental outputs across runs.
-      - name: Cache native engine build
-        uses: actions/cache@v4
-        with:
-          path: packages/torrent_engine/.dart_tool/native_build
-          key: torrent-native-Linux-${{ hashFiles('packages/torrent_engine/native/**', 'packages/torrent_engine/hook/build.dart') }}
-          restore-keys: |
-            torrent-native-Linux-
+      - name: Cache native compilation
+        uses: ./.github/actions/cache-native
 
       - name: Install native build dependencies
         run: |

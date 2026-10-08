@@ -1,0 +1,16 @@
+name: Cache native compilation
+description: Reuse libtorrent and engine outputs only within the same runner toolchain and dependency configuration.
+runs:
+  using: composite
+  steps:
+    - id: runner-image
+      shell: bash
+      run: |
+        echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+        echo "CI_RUNNER_IMAGE=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+    - uses: actions/cache@v4
+      with:
+        path: packages/torrent_engine/.dart_tool/native_build
+        key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh', '.github/workflows/release.yml') }}-${{ hashFiles('packages/torrent_engine/native/*.cpp', 'packages/torrent_engine/native/*.h') }}
+        restore-keys: |
+          native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh', '.github/workflows/release.yml') }}-
