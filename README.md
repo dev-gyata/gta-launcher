@@ -70,6 +70,26 @@ The game screen has buttons for **Launcher** (back), **Reload**, **Open in brows
 
 If the webview can't run the game, a banner appears with an Open in browser button. The app remembers the source choice, separate values for each source, port, and play mode. Saved folder settings from earlier versions remain usable. If the port is busy, it uses a free one and shows the address.
 
+### Controller
+
+Xbox, PlayStation and other standard controllers work in the launcher window and in the browser. The game engine only reads keyboard and mouse, so the page translates the controller into the game's PC controls:
+
+| Controller | Action | Sends |
+| --- | --- | --- |
+| Left stick | Move / steer, accelerate, brake | W A S D |
+| Right stick | Camera | Mouse movement |
+| LT / RT | Aim / shoot | Right / left mouse button |
+| A | Sprint; accept in menus and phone | Shift + Enter |
+| B | Reload, light melee; back in menus | R + Backspace |
+| X | Jump / handbrake | Space |
+| Y | Enter or exit vehicle | F |
+| LB / RB | Weapon wheel / cover | Tab / Q |
+| L3 / R3 | Stealth / look behind | Ctrl / C |
+| Back / Start | Camera view / pause menu | V / Esc |
+| D-pad | Phone, menus, radio | Arrow keys |
+
+On the start screen, A picks Story Mode, X picks Sandbox Mode and B goes back. Limitations: movement and triggers are on/off rather than analog, on-screen prompts show keyboard keys, and there is no vibration. Add `?padsens=1.5` to the game URL to change camera speed, or `?pad=0` to turn the controller off.
+
 ## Build
 
 Requires Flutter 3.44+, CMake 3.20+, a C++17 toolchain, and static OpenSSL development libraries for the target architecture. Build each OS on that OS. On macOS, install CMake and run `bash tool/release/build_openssl_macos.sh`; it builds checksum-verified static OpenSSL 3.6.4 for arm64 and macOS 12. On Linux install CMake, the C++ compiler, and `libssl-dev` (or your distribution's equivalent). On Windows use Visual Studio C++ tools and CMake, then run `vcpkg install openssl:x64-windows-static --x-install-root=.dart_tool/native_dependencies/vcpkg` from the repository root.
