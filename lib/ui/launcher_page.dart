@@ -546,8 +546,7 @@ class _LauncherPageState extends State<LauncherPage> {
           '1. Tap Copy and open Chrome.\n'
           '2. Paste into the address bar and go.\n'
           '3. Set "Unsafe WebGPU Support" to Enabled, then tap Relaunch.\n\n'
-          'This setting is experimental: Chrome may be less stable with it, and it does not add missing hardware '
-          'features (the game also needs BC texture support).',
+          'This setting is experimental: Chrome may be less stable with it.',
         ),
         actions: [
           TextButton(
@@ -887,10 +886,11 @@ class _LauncherPageState extends State<LauncherPage> {
                     Text(
                       _useInApp
                           ? Platform.isIOS
-                                ? 'The game opens in this window. It needs iOS/iPadOS 26 and about 8 GB of memory (an M-series iPad).'
+                                ? 'The game opens in this window. It needs iOS/iPadOS 26 and about 8 GB of memory (an M-series iPad); '
+                                      'iPhones may run out of memory.'
                                 : 'The game opens in this window. If it does not run, use Open in browser with Chrome or Edge.'
                           : Platform.isAndroid
-                          ? 'The game opens in Chrome. It needs WebGPU and a graphics chip with BC texture support.'
+                          ? 'The game opens in Chrome. It needs WebGPU and plenty of memory.'
                           : 'Use Chrome or Edge. The game needs WebGPU.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,

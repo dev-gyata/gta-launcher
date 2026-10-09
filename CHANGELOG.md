@@ -5,6 +5,12 @@ All notable changes to the playgta5 Launcher. Each release on the [Releases page
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-10-09
+
+### Changed
+
+- Graphics chips without BC textures (iPhones and A-chip iPads, most Android phones) no longer stop at *the graphics chip has no BC texture support*: the game decodes its textures as they load and starts with the low-memory settings. Decoded textures take 4-8 times the graphics memory, so these devices may still run out of memory.
+
 ## [1.4.2] - 2026-10-09
 
 ### Added
@@ -72,7 +78,8 @@ All notable changes to the playgta5 Launcher. Each release on the [Releases page
 - Game sources: a local folder, an HTTP mirror, or a magnet link (bundled torrent engine that downloads only the pieces the game asks for, ZIP mirrors supported).
 - In-app play on macOS and Windows; browser play on Linux.
 
-[Unreleased]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/dev-gyata/gta-launcher/compare/v1.3.0...v1.4.0

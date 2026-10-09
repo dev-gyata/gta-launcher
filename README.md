@@ -59,7 +59,7 @@ The app needs GTK 3 runtime libraries, typically installed on desktop distributi
 The Android app runs the same game server on the device and opens the game in Chrome. Android's built-in WebView cannot give the game the shared memory it needs. Whether a phone or tablet can actually run the game depends on its hardware, and most phones today cannot:
 
 - A current Chrome with WebGPU. The game runs as a 32-bit build on Android (converted once on first start, then cached): it is steadier and a little faster than the 64-bit one.
-- A graphics chip with WebGPU **BC texture support** (`texture-compression-bc`). The game's textures are stored in that format, and most phone GPUs (Adreno, Mali) don't support it; some high-end tablets do.
+- The game's textures are stored in the **BC formats** (`texture-compression-bc`), which most phone GPUs (Adreno, Mali, Apple A-series) don't support. On such a chip the game decodes the textures as they load: that takes 4-8 times their graphics memory and some loading time, so those devices always run the low-memory settings, and they may still run out of memory.
 - About 8 GB of RAM: the game reserves 3 GB at start.
 - About 20 GB of free storage for the game data.
 
@@ -67,7 +67,7 @@ Before loading anything, the game page checks these and names whatever is missin
 
 Sources on Android are **HTTP** and **Local**. For Local, **Choose…** asks once for Android's **All files access** (the game data is read by path, which the system folder picker cannot give), then opens a folder browser: open the folder that holds `playgta5.com` (a green tick shows when it is found) and press **Use this folder**. If you decline the permission, the launcher uses its own folder instead (`Android/data/com.playgta5.playgta5_launcher/files/game`, filled over USB or with `adb push`). Torrents are desktop only for now.
 
-If the game says *WebGPU found no usable graphics adapter*, Chrome may be hiding WebGPU on that graphics chip. **Turn on WebGPU in Chrome** in the launcher copies `chrome://flags/#enable-unsafe-webgpu` and opens Chrome (apps cannot open Chrome's settings pages directly): paste it into the address bar, set **Unsafe WebGPU Support** to **Enabled** and tap **Relaunch**. The setting is experimental and can make Chrome less stable, and it does not add BC texture support a chip lacks.
+If the game says *WebGPU found no usable graphics adapter*, Chrome may be hiding WebGPU on that graphics chip. **Turn on WebGPU in Chrome** in the launcher copies `chrome://flags/#enable-unsafe-webgpu` and opens Chrome (apps cannot open Chrome's settings pages directly): paste it into the address bar, set **Unsafe WebGPU Support** to **Enabled** and tap **Relaunch**. The setting is experimental and can make Chrome less stable.
 
 While the game plays in Chrome, a **Game server running** notification keeps the server alive (Android would otherwise stop it in the background); its **Stop** button stops the server. The server also stops by itself when you close the app (swipe it away from recent apps) and when the game's Chrome tab has been closed for 5 minutes.
 
@@ -76,7 +76,7 @@ While the game plays in Chrome, a **Game server running** notification keeps the
 The iOS app runs the game server on the device and plays the game inside the app (iOS suspends apps in the background, so the game cannot be moved to Safari). Every iOS browser and in-app view uses Apple's WebKit, which has no 64-bit WebAssembly: on first start the game page converts `game.wasm` to 32-bit memory with the bundled binaryen.js (about 15 seconds to a minute, once; the result is cached), then runs it. The same path makes the game work in Safari on a Mac. Your game files are not modified. Requirements:
 
 - iOS/iPadOS 26 or newer (WebGPU in WebKit).
-- An M-series iPad (iPad Pro or Air) is the realistic target: BC textures and about 8 GB of memory (the game uses about 3 GB of its 4 GB limit). Phones and older iPads will most likely run out of memory.
+- An M-series iPad (iPad Pro or Air) is the realistic target: BC textures and about 8 GB of memory (the game uses about 3 GB of its 4 GB limit). iPhones and A-chip iPads have no BC textures: the game decodes them in software with the low-memory settings, and will most likely run out of memory.
 
 Sources are **HTTP** and **Local**. For Local, either press **Choose…** and pick the folder that holds `playgta5.com` (on the device, iCloud Drive or a USB drive; the launcher remembers it), or copy `playgta5.com` into **On My iPad › playgta5 Launcher › game** with the Files app or with Finder on a Mac (iPad selected › Files), which the launcher uses by default.
 

@@ -549,10 +549,11 @@ async function dropOldCache() {
 	} catch (e) { console.warn('could not remove the old cache: ' + e); }
 }
 let lowMemory = false;		// set below (module scope: the ?mem readout further down also needs it)
+let noBC = false;		// set by deviceGaps: the graphics chip has no BC textures (decoded in software)
 let startSize = [1280, 720], wantSize = null;		// set below (module scope: installInput uses them)
-// Device check before anything loads (phones and tablets often fall short): the engine is 64-bit wasm with shared memory, and the GPU worker creates the game's
-// textures in their BC formats as stored, with no fallback (most phone GPUs, Adreno and Mali, have no BC). Missing pieces are named on the loading screen
-// instead of a black screen; ?nocheck=1 starts anyway.
+// Device check before anything loads (phones and tablets often fall short): no WebGPU is named on the loading screen instead of a black screen; ?nocheck=1
+// starts anyway. A graphics chip without BC textures (iPhones and A-chip iPads, Adreno and Mali phones) is not a gap: the GPU worker then decodes the game's BC
+// textures on upload (bc_decode.js), at 4-8x their GPU memory, so those devices get the low-memory profile below (noBC).
 async function deviceGaps() {
 	const gaps = [];
 	// (no 64-bit WebAssembly is not a gap: the loader then lowers game.wasm to 32-bit memory, see mem32 below)
@@ -560,8 +561,8 @@ async function deviceGaps() {
 	try { adapter = navigator.gpu && await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) {}
 	if (!navigator.gpu) gaps.push('WebGPU is not available in this browser');
 	else if (!adapter) gaps.push('WebGPU found no usable graphics adapter' + (/Android/.test(navigator.userAgent) ? ' (Chrome may be hiding it on this graphics chip: in the launcher, use "Turn on WebGPU in Chrome", or set chrome://flags/#enable-unsafe-webgpu to Enabled)' : ''));
-	else if (!adapter.features.has('texture-compression-bc')) gaps.push('the graphics chip has no BC texture support (texture-compression-bc), which the game\'s textures need');
-	postLog('[page env] device check: ' + (gaps.length ? gaps.join('; ') : 'ok') + (adapter?.info ? ' (adapter ' + [adapter.info.vendor, adapter.info.architecture, adapter.info.description].filter(Boolean).join(' ') + ')' : ''));
+	else if (!adapter.features.has('texture-compression-bc')) noBC = true;
+	postLog('[page env] device check: ' + (gaps.length ? gaps.join('; ') : 'ok') + (noBC ? ', no BC textures (decoded in software)' : '') + (adapter?.info ? ' (adapter ' + [adapter.info.vendor, adapter.info.architecture, adapter.info.description].filter(Boolean).join(' ') + ')' : ''));
 	return gaps;
 }
 const gaps = crossOriginIsolated && q.get('nocheck') !== '1' ? await deviceGaps() : [];
@@ -591,11 +592,13 @@ else {
 	// Shadows off (-shadowQuality=-1, engine level 0 below the menu's lowest; SettingsManager.cpp, wasm): the cascade shadow pass was a third of all draws (Node, 1366x600:
 	// 600-900 of 1,300-2,900 per frame), and a 4-core Chromebook spent ~110 us per draw. ?shadows=1 keeps them at the lowest level.
 	const lowParam = q.get('low');
-	lowMemory = lowParam === '1' || (lowParam !== '0' && navigator.deviceMemory && navigator.deviceMemory <= 4);
+	// No BC textures (noBC): decoded textures take 4-8x the GPU memory, and Safari reports no deviceMemory at all (iPhones), so the profile is on there as well.
+	lowMemory = lowParam === '1' || (lowParam !== '0' && ((navigator.deviceMemory && navigator.deviceMemory <= 4) || noBC));
 	const LOW_ARGS = ['-textureQuality=0', '-pedVariety=0', '-vehicleVariety=0', '-shadowQuality=' + (q.get('shadows') === '1' ? 0 : -1), '-reflectionQuality=0', '-particleQuality=0',
 		'-grassQuality=0', '-cityDensity=0', '-lodScale=0', '-pedLodBias=0', '-vehicleLodBias=0'];
 	const cores = +(q.get('cores') || 0) || (lowMemory ? 2 : navigator.hardwareConcurrency);
-	if (lowMemory) hud.textContent = 'Low-memory device (' + (navigator.deviceMemory || '?') + ' GB reported): close other tabs. If the tab shows "Aw, Snap!" or SIGILL it ran out of memory.';
+	if (noBC) hud.textContent = 'This graphics chip has no BC textures: they are decoded, which takes more memory and loading time. Close other tabs and apps. If the page reloads or goes blank it ran out of memory.';
+	else if (lowMemory) hud.textContent = 'Low-memory device (' + (navigator.deviceMemory || '?') + ' GB reported): close other tabs. If the tab shows "Aw, Snap!" or SIGILL it ran out of memory.';
 postLog('[page env] ' + JSON.stringify({ deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency, usingCores: cores, mem32, low: lowMemory, isolated: crossOriginIsolated, ua: navigator.userAgent.slice(0, 120), screen: screen.width + 'x' + screen.height + '@' + devicePixelRatio }));
 // Back buffer = the browser window in device pixels (native resolution), following window resizes live (see installInput). ?scale=0.75 renders at 75 % (faster), ?fixed=1 keeps the
 // start-up size whatever the window does, ?res=1920x1080 forces a size. Even numbers, at most 3840x2160 (2560x1440 in the low-memory profile: screen-sized render targets dominate GPU memory).
@@ -636,6 +639,7 @@ const worker = new Worker(BASE + '/loader.js');
 		shotRt: q.get('shotrt') === '1',		// ?shotrt=1 (with ?shot=N): every render target of one frame after the world is shown to the dev server's shots/ (wgpu_worker.js)
 		noHints: q.get('nohints') === '1',		// ?nohints=1: do not fetch the streamer's queued reads ahead (io_worker.js drainHints; diagnostics)
 		noPack: q.get('nopack') === '1',		// ?nopack=1: fetch shaders one by one, not from the shader packs (wgpu_worker.js; diagnostics)
+		bcDecode: q.get('bcdecode') === '1',		// ?bcdecode=1: decode BC textures even on a chip that has them (tests the no-BC path on a desktop; wgpu_worker.js)
 		gpuLimits: q.get('limits') || '',		// ?limits=maxSampledTexturesPerShaderStage:16,... : request a smaller GPU device than the adapter offers (reproduces a weaker device's limits; wgpu_worker.js)
 		keepThreads: (q.get('keep') || '').split(',').reduce((m, g) => m | ({ replay: 1, net: 2, bink: 4, idle: 8 }[g] || 0), 0),		// ?keep=replay,net,bink,idle: start those thread groups (diagnostics)
 		cores,

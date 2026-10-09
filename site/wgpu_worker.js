@@ -38,6 +38,8 @@ const OP = {
 const isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
 let parentPort = null;
 if (isNode) parentPort = require('worker_threads').parentPort;
+// BC block decoder (bc_decode.js, next to this file): textures of chips without texture-compression-bc are created uncompressed (see bcDecode)
+const { decodeBC, BC_BLOCK_BYTES, BC_TEXEL_BYTES } = isNode ? require('./bc_decode.js') : (importScripts('bc_decode.js'), self.BCDecode);
 
 function post(msg) { if (parentPort) parentPort.postMessage(msg); else self.postMessage(msg); }
 // fs.writeSync: process.stderr in a worker is proxied through the main thread, whose event loop the blocked game never runs
@@ -66,7 +68,16 @@ const DXGI = {
 };
 const BIND_SRV = 0x8, BIND_RT = 0x20, BIND_DS = 0x40, BIND_UAV = 0x80;
 
+// No texture-compression-bc (bcDecode, set in initDevice): a BC texture is created in an uncompressed format and its blocks are decoded on upload
+// (bc_decode.js). BC1/2/3/7 -> rgba8 (4x / 8x the memory), BC4 -> r8, BC5 -> rg8, BC6H -> rgba16float; `decode` names the block format.
 function mapFormat(f, bind) {
+	const m = mapFormatBC(f, bind);
+	if (!bcDecode || !m.format.startsWith('bc')) return m;
+	const kind = m.format.slice(0, m.format.indexOf('-')), srgb = m.format.endsWith('-srgb');
+	const format = kind === 'bc4' ? 'r8unorm' : kind === 'bc5' ? 'rg8unorm' : kind === 'bc6h' ? 'rgba16float' : srgb ? 'rgba8unorm-srgb' : 'rgba8unorm';
+	return { format, views: m.views && [srgb ? 'rgba8unorm' : 'rgba8unorm-srgb'], decode: kind };
+}
+function mapFormatBC(f, bind) {
 	const ds = (bind & BIND_DS) !== 0;
 	switch (f) {
 	case DXGI.R32G32B32A32_FLOAT: return { format: 'rgba32float' };
@@ -116,7 +127,7 @@ const hasStencil = (format) => format === 'depth24plus-stencil8' || format === '
 const isDepth = (format) => format.startsWith('depth') || format === 'stencil8';
 
 // ---- state --------------------------------------------------------------------------------------------------------------
-let gpu = null, adapter = null, device = null;
+let gpu = null, adapter = null, device = null, bcDecode = false;
 let mem = null, memBuffer = null, i32 = null, u32 = null, f32 = null, u8 = null, ringBase = 0, ringSize = 0;
 let canvas = null, canvasCtx = null, canvasFormat = null, blit = null, canvasConfigured = false;
 let fpsChannel = null, fpsOverlayN = 0, fpsOverlayT = 0;
@@ -529,6 +540,9 @@ async function initDevice(msg) {
 	// ?limits=name:value,... (browser): the same, lowered to a weaker device's limits (never below the WebGPU defaults)
 	if (!isNode) for (const kv of (new URLSearchParams(self.location.search).get('limits') || '').split(',').filter(Boolean)) { const [k, v] = kv.split(':'); limits[k] = +v; }
 	device = await adapter.requestDevice({ requiredFeatures, requiredLimits: limits });
+	// ?bcdecode=1 (page; WGPU_BCDECODE=1 in Node): decode BC textures even when the chip has BC (tests the fallback on a desktop)
+	bcDecode = !device.features.has('texture-compression-bc') || (isNode ? process.env.WGPU_BCDECODE === '1' : new URLSearchParams(self.location.search).get('bcdecode') === '1');
+	if (bcDecode) logLine('BC textures are decoded on upload (' + (device.features.has('texture-compression-bc') ? 'forced' : 'no texture-compression-bc') + ')');
 	device.addEventListener('uncapturederror', (ev) => {
 		errorCount++;
 		Atomics.add(i32, ringW + 4, 1);
@@ -591,7 +605,7 @@ function createTexture(id, dim, w, h, d, mips, arraySize, dxgi, bind, samples) {
 	const bytes = textureBytes(desc);
 	texBytesAlive += bytes; texCount++;
 	if (texBytesAlive > texBytesPeak) texBytesPeak = texBytesAlive;
-	objs.set(id, { kind: 'texture', tex, desc, format: m.format, views: new Map(), a8: !!m.a8, bytes });
+	objs.set(id, { kind: 'texture', tex, desc, format: m.format, views: new Map(), a8: !!m.a8, decode: m.decode || null, gen: 0, bytes });
 }
 
 // Exit report: where the GPU-side memory of the mirror goes (diagnostics for the 4 GB target).
@@ -641,6 +655,11 @@ function uploadBuffer(id, offset, size, dataOff, noOverwrite) {
 	}
 }
 
+let decodeBuf = null;		// uploadTexture's decoded texels (one growing buffer: writeTexture copies out of it before returning)
+function decodeScratch(n) {
+	if (!decodeBuf || decodeBuf.length < n) decodeBuf = new Uint8Array(Math.max(n, 1 << 20));
+	return decodeBuf;
+}
 function uploadTexture(id, mip, slice, x, y, z, w, h, d, bytesPerRow, rowsPerImage, size, dataOff) {
 	const o = objs.get(id);
 	if (!o) return;
@@ -654,6 +673,14 @@ function uploadTexture(id, mip, slice, x, y, z, w, h, d, bytesPerRow, rowsPerIma
 		const out = new Uint8Array(w * h * 4);
 		for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) out[(r * w + c) * 4 + 3] = data[r * bytesPerRow + c];
 		data = out; bpr = w * 4;
+	}
+	if (o.decode) {		// BC blocks into the uncompressed texture (bcDecode): bytesPerRow/rowsPerImage count block rows; w/h, padded to whole blocks, are clipped to the mip
+		o.gen++;
+		const ms = mipSize(o, mip), tw = Math.min(w, ms.w - x), th = Math.min(h, ms.h - y), tb = BC_TEXEL_BYTES[o.decode];
+		const srcSlice = bytesPerRow * (rowsPerImage || Math.ceil(h / 4)), outBpr = tw * tb, outSlice = outBpr * th;
+		const out = decodeScratch(outSlice * d);
+		for (let z = 0; z < d; z++) decodeBC(o.decode, data, z * srcSlice, bytesPerRow, tw, th, out.subarray(z * outSlice, (z + 1) * outSlice), outBpr);
+		data = out.subarray(0, outSlice * d); bpr = outBpr; rowsPerImage = th; w = tw; h = th;
 	}
 	device.queue.writeTexture({ texture: o.tex, mipLevel: mip, origin }, data,
 		{ bytesPerRow: bpr, rowsPerImage }, { width: w, height: h, depthOrArrayLayers: d });
@@ -1997,6 +2024,26 @@ function copyThroughBuffer(s, ss, d, ds, w, h, hasBox, l, t, dx, dy) {
 	enc.copyTextureToBuffer({ texture: s.tex, mipLevel: ss.mip, origin: so }, { buffer: buf, bytesPerRow: bpr, rowsPerImage: ch }, { width: sb ? cw * 4 : cw, height: sb ? ch * 4 : ch, depthOrArrayLayers: 1 });
 	enc.copyBufferToTexture({ buffer: buf, bytesPerRow: bpr, rowsPerImage: ch }, { texture: d.tex, mipLevel: ds.mip, origin: dO }, { width: db ? cw * 4 : cw, height: db ? ch * 4 : ch, depthOrArrayLayers: 1 });
 }
+// The same copy into a BC texture this device decodes (bcDecode): the blocks the GPU compressor wrote come back to the CPU, are decoded and written
+// into the uncompressed texture a few ms later (the copy itself cannot wait for the readback). An upload into the texture in between wins: it is newer.
+function copyBlocksDecoded(dstId, s, ss, d, ds, w, h, hasBox, l, t, dx, dy) {
+	const kind = d.decode, bb = BC_BLOCK_BYTES[kind], tb = BC_TEXEL_BYTES[kind];
+	const bpr = Math.ceil(w * bb / 256) * 256, MU = GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, size = bpr * h;
+	const rb = pooledBuffer(size, MU);
+	getEncoder().copyTextureToBuffer({ texture: s.tex, mipLevel: ss.mip, origin: { x: hasBox ? l : 0, y: hasBox ? t : 0, z: ss.layer } }, { buffer: rb, bytesPerRow: bpr, rowsPerImage: h },
+		{ width: w, height: h, depthOrArrayLayers: 1 });
+	usedInEncoder.add(s);
+	flush('bc decode copy');
+	const gen = d.gen, dm = mipSize(d, ds.mip), tw = Math.min(w * 4, dm.w - dx), th = Math.min(h * 4, dm.h - dy);
+	rb.mapAsync(GPUMapMode.READ).then(() => {
+		if (objs.get(dstId) === d && d.gen === gen && tw > 0 && th > 0) {
+			const out = new Uint8Array(tw * th * tb);
+			decodeBC(kind, new Uint8Array(rb.getMappedRange()), 0, bpr, tw, th, out, tw * tb);
+			device.queue.writeTexture({ texture: d.tex, mipLevel: ds.mip, origin: { x: dx, y: dy, z: ds.layer } }, out, { bytesPerRow: tw * tb, rowsPerImage: th }, { width: tw, height: th, depthOrArrayLayers: 1 });
+		}
+		rb.unmap(); releaseBuffer(rb, size, MU);
+	}, (e) => logOnce('bcmap', 'BC decode copy: readback failed: ' + e.message));
+}
 function copyRegion(dstId, dstSub, dx, dy, dz, srcId, srcSub, hasBox, l, t, f, r, b, bk) {
 	const s = objs.get(srcId), d = objs.get(dstId);
 	if (!s || !d) return;
@@ -2011,8 +2058,18 @@ function copyRegion(dstId, dstSub, dx, dy, dz, srcId, srcSub, hasBox, l, t, f, r
 	if (s.kind !== 'texture' || d.kind !== 'texture') return;
 	const ss = subresourceOf(s, srcSub), ds = subresourceOf(d, dstSub);
 	const m = mipSize(s, ss.mip);
-	const w = hasBox ? r - l : m.w, h = hasBox ? b - t : m.h, dep = hasBox ? bk - f : m.d;
+	let w = hasBox ? r - l : m.w, h = hasBox ? b - t : m.h;
+	const dep = hasBox ? bk - f : m.d;
 	const three = s.desc.dimension === '3d';
+	if (s.decode || d.decode) {		// a BC texture created uncompressed (bcDecode)
+		if (d.decode && !s.decode && !three && texelBytesOf(s.format) === BC_BLOCK_BYTES[d.decode]) { copyBlocksDecoded(dstId, s, ss, d, ds, w, h, hasBox, l, t, dx, dy); markColorDirty(d); return; }
+		if (!s.decode || !d.decode) { logOnce('bccopy' + s.format + d.format, 'copy ' + s.format + ' -> ' + d.format + ' skipped: BC texture decoded on this device'); return; }
+		// both decoded: an ordinary copy, but BC boxes are padded to whole blocks and a small mip is smaller than its block
+		const sm = mipSize(s, ss.mip), dm = mipSize(d, ds.mip);
+		w = Math.min(w, sm.w - (hasBox ? l : 0), dm.w - dx); h = Math.min(h, sm.h - (hasBox ? t : 0), dm.h - dy);
+		if (w <= 0 || h <= 0) return;
+		d.gen++;
+	}
 	if (s.format !== d.format && !three && d.desc.dimension !== '3d' && (blockBytes(s.format) !== 0) !== (blockBytes(d.format) !== 0)
 		&& (blockBytes(s.format) || blockBytes(d.format)) === (texelBytesOf(s.format) || texelBytesOf(d.format))) {
 		copyThroughBuffer(s, ss, d, ds, w, h, hasBox, l, t, dx, dy);
