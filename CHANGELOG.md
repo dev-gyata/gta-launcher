@@ -5,6 +5,8 @@ All notable changes to the playgta5 Launcher. Each release on the [Releases page
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-09
+
 ### Added
 
 - **Engine build** in Game options › Advanced: 32-bit or 64-bit (and Automatic on desktop). On phones and tablets **32-bit is selected by default**; on Android you can switch to 64-bit, on iPhone/iPad only 32-bit runs.
@@ -70,7 +72,8 @@ All notable changes to the playgta5 Launcher. Each release on the [Releases page
 - Game sources: a local folder, an HTTP mirror, or a magnet link (bundled torrent engine that downloads only the pieces the game asks for, ZIP mirrors supported).
 - In-app play on macOS and Windows; browser play on Linux.
 
-[Unreleased]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/dev-gyata/gta-launcher/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/dev-gyata/gta-launcher/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/dev-gyata/gta-launcher/compare/v1.2.0...v1.3.0
