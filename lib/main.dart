@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'services/device.dart';
 import 'services/in_app_support.dart';
 import 'services/settings.dart';
 import 'ui/launcher_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
-  await windowManager.waitUntilReadyToShow(
-    const WindowOptions(size: Size(1280, 800), minimumSize: Size(720, 480), center: true, title: 'playgta5 Launcher'),
-    () async {
-      await windowManager.show();
-      await windowManager.focus();
-    },
-  );
+  if (isDesktop) {
+    await windowManager.ensureInitialized();
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(size: Size(1280, 800), minimumSize: Size(720, 480), center: true, title: 'playgta5 Launcher'),
+      () async {
+        await windowManager.show();
+        await windowManager.focus();
+      },
+    );
+  }
   final inApp = await InAppSupport.detect();
   runApp(LauncherApp(settings: Settings.create(), inApp: inApp));
 }

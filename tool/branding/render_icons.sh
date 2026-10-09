@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders assets/branding/logo.svg into the macOS and Windows app icons and docs/logo.png.
+# Renders assets/branding/logo.svg into the macOS, Windows and Android app icons and docs/logo.png.
 # macOS only (uses Google Chrome headless to rasterise the SVG and sips to resize); no other dependencies.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,10 @@ render() {
   "$chrome" --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 \
     --window-size=1024,1024 --screenshot="$2" "file://$1" >/dev/null 2>&1
 }
-page() {  # page <html> <img style>
+page() {  # page <html> <img style> [svg]
   cat > "$1" <<EOF
 <!doctype html><html><body style="margin:0;width:1024px;height:1024px;background:transparent">
-<img src="file://$svg" style="position:absolute;display:block;$2"></body></html>
+<img src="file://${3:-$svg}" style="position:absolute;display:block;$2"></body></html>
 EOF
 }
 
@@ -25,6 +25,11 @@ page "$work/full.html" 'left:0;top:0;width:1024px;height:1024px'
 page "$work/macos.html" 'left:72px;top:72px;width:880px;height:880px;filter:drop-shadow(0 12px 18px rgba(0,0,0,.35))'
 render "$work/full.html" "$work/full.png"
 render "$work/macos.html" "$work/macos.png"
+# Android adaptive icon: the mark alone (no tile or rim) as the foreground on a 108 dp canvas whose middle 66 dp always shows,
+# and the tile's gradient as the background (res/drawable/ic_launcher_background.xml), so any launcher mask looks right.
+grep -v 'url(#tile)\|url(#rim)' "$svg" > "$work/mark.svg"
+page "$work/android.html" 'left:0;top:0;width:1024px;height:1024px' "$work/mark.svg"
+render "$work/android.html" "$work/android_fg.png"
 
 icons="$repo/macos/Runner/Assets.xcassets/AppIcon.appiconset"
 for size in 16 32 64 128 256 512 1024; do
@@ -50,5 +55,12 @@ for size, d in zip(sizes, data):
 open(out, 'wb').write(header + entries + b''.join(data))
 EOF
 
+res="$repo/android/app/src/main/res"
+for d in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do
+  IFS=: read -r name legacy fg <<< "$d"
+  sips -s format png -z "$legacy" "$legacy" "$work/full.png" --out "$res/mipmap-$name/ic_launcher.png" >/dev/null
+  sips -s format png -z "$fg" "$fg" "$work/android_fg.png" --out "$res/mipmap-$name/ic_launcher_foreground.png" >/dev/null
+done
+
 sips -s format png -z 256 256 "$work/full.png" --out "$repo/docs/logo.png" >/dev/null
-echo "Icons written: $icons, windows/runner/resources/app_icon.ico, docs/logo.png"
+echo "Icons written: $icons, windows/runner/resources/app_icon.ico, $res/mipmap-*, docs/logo.png"

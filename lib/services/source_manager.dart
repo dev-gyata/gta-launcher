@@ -45,6 +45,7 @@ class SourceManager {
   }
 
   Future<int> cacheBytes() async {
+    if (!TorrentEngine.isSupported) return 0;
     final cache = await _cache();
     return await cache.exists() ? TorrentEngine.cacheDiskUsage(cache.path) : 0;
   }

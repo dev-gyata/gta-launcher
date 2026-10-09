@@ -23,8 +23,9 @@ Grab the latest binaries from [GitHub Releases](https://github.com/dev-gyata/gta
 | Windows (x64) | `playgta5-launcher-windows-x64.zip` | Extract the whole folder and run `playgta5_launcher.exe` |
 | macOS (arm64) | `playgta5-launcher-macos-arm64.zip` | Apple Silicon: unzip and move `playgta5_launcher.app` to Applications |
 | Linux (x64) | `playgta5-launcher-linux-x64.tar.gz` | Contents of `build/linux/x64/release/bundle/` — extract and run `playgta5_launcher` |
+| Android (phones and tablets) | `playgta5-launcher-android.apk` | Install the APK (allow installs from your browser or file manager). See [Phones and tablets](#phones-and-tablets) for requirements |
 
-Every `v*` tag (e.g. `v1.0.0`) builds all three OS binaries in CI and attaches them to that tag's release. Manual runs from the Actions tab build and upload artifacts without publishing by default; enable `publish` explicitly to publish a draft release.
+Every `v*` tag (e.g. `v1.0.0`) builds all four binaries in CI and attaches them to that tag's release. Manual runs from the Actions tab build and upload artifacts without publishing by default; enable `publish` explicitly to publish a draft release.
 
 The site's web files (`index.html`, `loader.js`, `game.js`, the workers and manifests) come with the launcher in `site/`. No game engine or game data is included or distributed with the launcher. To play, point it at a local folder, HTTP mirror, or torrent of files you are entitled to use, containing `playgta5.com/b/8b0b5899ed/game.wasm` and `playgta5.com/data/`. Wherever a file exists in both places, the launcher's copy in `site/` is used.
 
@@ -51,6 +52,23 @@ Windows may show a [SmartScreen warning for an unfamiliar release](https://learn
 Extract the complete archive and keep the `bundle/` contents together, including `lib/` and `data/`. Run `playgta5_launcher` inside that folder. If extraction loses the executable permission, run `chmod +x playgta5_launcher` from the same folder.
 
 The app needs GTK 3 runtime libraries, typically installed on desktop distributions. If missing, install your distribution's GTK 3 runtime package (for example, `libgtk-3-0` or `libgtk-3-0t64` on Debian/Ubuntu, depending on the release). Linux always opens the game in your browser; use Chrome or Edge on a system with WebGPU support.
+
+### Phones and tablets
+
+The Android app runs the same game server on the device and opens the game in Chrome. Android's built-in WebView cannot give the game the shared memory it needs. Whether a phone or tablet can actually run the game depends on its hardware, and most phones today cannot:
+
+- Chrome 133 or newer (64-bit WebAssembly and WebGPU).
+- A graphics chip with WebGPU **BC texture support** (`texture-compression-bc`). The game's textures are stored in that format, and most phone GPUs (Adreno, Mali) don't support it; some high-end tablets do.
+- About 8 GB of RAM: the game reserves 3 GB at start.
+- About 20 GB of free storage for the game data.
+
+Before loading anything, the game page checks these and names whatever is missing, instead of showing a black screen (`?nocheck=1` skips the check).
+
+Sources on Android are **HTTP** and **Local**. Android has no folder picker that gives the app a file path, so for Local copy the `playgta5.com` folder into the app's folder (shown in the launcher log, under `Android/data/com.playgta5.playgta5_launcher/files/game`) over USB or with `adb push`, then press **Check again**. Torrents are desktop only for now.
+
+While the game plays in Chrome, a **Game server running** notification keeps the server alive (Android would otherwise stop it in the background); its **Stop** button stops the server. The server also stops by itself when you close the app (swipe it away from recent apps) and when the game's Chrome tab has been closed for 5 minutes.
+
+iPhone and iPad are not supported yet: as far as we know, Safari's engine (used by every iOS browser) does not support the 64-bit WebAssembly the game needs.
 
 macOS builds and startup have been checked locally. Windows and Linux build/runtime verification still require their respective hosts; the release workflow is configured to build them.
 
@@ -79,6 +97,16 @@ Xbox, PlayStation and other standard controllers work in the launcher window and
 On the start screen, A picks Story Mode, X picks Sandbox Mode and B goes back. Vibration needs browser support: Chrome and Edge (including the Windows app) support it; the macOS app depends on the system WebKit version.
 
 The launcher drives the game's own gamepad support through engine memory for build `8b0b5899ed`, without changing any game files. If that is unavailable it falls back to translating the controller into keyboard and mouse input (digital movement, keyboard prompts, no vibration). URL options: `?pad=keys` forces that fallback, `?padsens=1.5` sets its camera speed, and `?pad=0` turns the controller off.
+
+### Touch controls
+
+On phones and tablets an on-screen gamepad appears once the game world is up, and the game treats it as a controller (controller prompts, wheels, vehicles):
+
+- **Left side:** a move stick appears where your thumb lands.
+- **Right side:** drag to look around.
+- **Buttons:** A/B/X/Y bottom right, LT (aim, brake) and RT (fire, accelerate) above them, LB (weapon wheel) and RB in the top corners, a D-pad on the left (up: phone, down: character wheel), L3/R3, and View/Menu at the top.
+
+The device vibrates where the game would rumble a controller. The controls hide while a physical controller is connected and never appear on desktops or touchscreen laptops. `?touch=1` forces them on (for testing), `?touch=0` turns them off, and `?padsens=` also scales the look speed.
 
 ## Build
 

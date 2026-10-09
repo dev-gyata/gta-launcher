@@ -11,6 +11,10 @@ Future<void> main(List<String> args) async {
     if (!input.config.buildCodeAssets) return;
     final os = input.config.code.targetOS;
     final arch = input.config.code.targetArchitecture;
+    // Desktop only. On Android and iOS nothing is bundled: the launcher hides
+    // the torrent source there (TorrentEngine.isSupported), so no native call
+    // is ever made.
+    if (os == OS.android || os == OS.iOS) return;
     if (os != OS.macOS && os != OS.linux && os != OS.windows) {
       throw UnsupportedError(
         'Torrent engine supports macOS, Windows, and Linux.',

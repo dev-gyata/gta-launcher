@@ -213,10 +213,45 @@ jobs:
           path: playgta5-launcher-windows-x64.zip
           if-no-files-found: error
 
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+
+      # Signed with the debug key for now (sideloading); the torrent engine is desktop only and not built here.
+      - name: Build Android release APK
+        run: flutter build apk --release
+
+      - name: Package Android APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk playgta5-launcher-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-artifact
+          path: playgta5-launcher-android.apk
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag' || inputs.publish == true
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -241,3 +276,4 @@ jobs:
             dist/playgta5-launcher-linux-x64.tar.gz
             dist/playgta5-launcher-macos-arm64.zip
             dist/playgta5-launcher-windows-x64.zip
+            dist/playgta5-launcher-android.apk

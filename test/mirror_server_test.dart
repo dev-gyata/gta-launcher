@@ -58,6 +58,15 @@ void main() {
 
   Future<List<int>> bytes(HttpClientResponse r) => r.fold<List<int>>([], (acc, chunk) => acc..addAll(chunk));
 
+  test('heartbeat answers 204 and counts as activity', () async {
+    final before = server.lastRequest!;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    final r = await send('HEAD', '/heartbeat');
+    await r.drain<void>();
+    expect(r.statusCode, HttpStatus.noContent);
+    expect(server.lastRequest!.isAfter(before), isTrue);
+  });
+
   test('serves index with isolation headers', () async {
     final r = await send('GET', '/');
     expect(r.statusCode, 200);

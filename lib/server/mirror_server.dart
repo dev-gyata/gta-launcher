@@ -45,10 +45,16 @@ class MirrorServer {
 
   HttpServer? _server;
   final _log = StreamController<String>.broadcast();
+  DateTime? _lastRequest;
 
   Stream<String> get log => _log.stream;
   bool get isRunning => _server != null;
   int? get port => _server?.port;
+
+  /// When the last request arrived (or the server started). The game page
+  /// sends `/heartbeat` every 30 s while it is open, so a long silence means
+  /// it was closed.
+  DateTime? get lastRequest => _lastRequest;
   Uri? get url =>
       _server == null ? null : Uri.parse('http://localhost:${_server!.port}/');
 
@@ -67,6 +73,7 @@ class MirrorServer {
     server.autoCompress = false;
     server.defaultResponseHeaders.clear();
     _server = server;
+    _lastRequest = DateTime.now();
     server.listen(_handle, onError: (Object e) => _emit('Server error: $e'));
     _emit('Serving $root at $url');
     return url!;
@@ -99,7 +106,12 @@ class MirrorServer {
   }
 
   Future<void> _handle(HttpRequest request) async {
+    _lastRequest = DateTime.now();
     final res = request.response;
+    if (request.uri.path == '/heartbeat') {
+      res.statusCode = HttpStatus.noContent;
+      return res.close();
+    }
     res.headers
       ..set('Cross-Origin-Opener-Policy', 'same-origin')
       ..set('Cross-Origin-Embedder-Policy', 'require-corp')

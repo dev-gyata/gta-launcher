@@ -1,10 +1,18 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../services/device.dart';
+
 /// Shows the locally served game inside the launcher window.
+///
+/// On phones and tablets it fills the screen in landscape with no toolbar (the
+/// system back gesture leaves). It pops with `true` when the player chose to
+/// open the game in the browser instead, so the launcher keeps the server
+/// running for it.
 class GamePage extends StatefulWidget {
   const GamePage({super.key, required this.url, required this.onLog, this.environment});
 
@@ -23,6 +31,32 @@ class _GamePageState extends State<GamePage> {
   bool _loading = true;
   bool? _supported;
   bool _fullScreen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (isMobile) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (isMobile) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setPreferredOrientations([]);
+    }
+    super.dispose();
+  }
+
+  void _openInBrowser() {
+    if (isMobile) {
+      Navigator.of(context).pop(true);
+    } else {
+      launchUrl(widget.url, mode: LaunchMode.externalApplication);
+    }
+  }
 
   Future<void> _checkSupport(InAppWebViewController controller) async {
     try {
@@ -56,47 +90,48 @@ class _GamePageState extends State<GamePage> {
     return Scaffold(
       body: Column(
         children: [
-          Material(
-            color: theme.colorScheme.surfaceContainer,
-            child: SizedBox(
-              height: 40,
-              child: Row(
-                children: [
-                  TextButton.icon(onPressed: _back, icon: const Icon(Icons.arrow_back), label: const Text('Launcher')),
-                  const Spacer(),
-                  if (_loading) const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                  IconButton(
-                    tooltip: 'Reload',
-                    onPressed: () => _controller?.reload(),
-                    icon: const Icon(Icons.refresh),
-                  ),
-                  IconButton(
-                    tooltip: 'Open in browser',
-                    onPressed: () => launchUrl(widget.url, mode: LaunchMode.externalApplication),
-                    icon: const Icon(Icons.open_in_browser),
-                  ),
-                  IconButton(
-                    tooltip: _fullScreen ? 'Exit full screen' : 'Full screen',
-                    onPressed: _toggleFullScreen,
-                    icon: Icon(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
-                  ),
-                  const SizedBox(width: 4),
-                ],
+          if (isDesktop)
+            Material(
+              color: theme.colorScheme.surfaceContainer,
+              child: SizedBox(
+                height: 40,
+                child: Row(
+                  children: [
+                    TextButton.icon(
+                      onPressed: _back,
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text('Launcher'),
+                    ),
+                    const Spacer(),
+                    if (_loading)
+                      const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    IconButton(
+                      tooltip: 'Reload',
+                      onPressed: () => _controller?.reload(),
+                      icon: const Icon(Icons.refresh),
+                    ),
+                    IconButton(
+                      tooltip: 'Open in browser',
+                      onPressed: _openInBrowser,
+                      icon: const Icon(Icons.open_in_browser),
+                    ),
+                    IconButton(
+                      tooltip: _fullScreen ? 'Exit full screen' : 'Full screen',
+                      onPressed: _toggleFullScreen,
+                      icon: Icon(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
               ),
             ),
-          ),
           if (_supported == false)
             MaterialBanner(
               content: const Text(
                 "This system's webview can't run the game (needs WebGPU and cross-origin isolation). "
                 'Use Open in browser with Chrome or Edge.',
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => launchUrl(widget.url, mode: LaunchMode.externalApplication),
-                  child: const Text('Open in browser'),
-                ),
-              ],
+              actions: [TextButton(onPressed: _openInBrowser, child: const Text('Open in browser'))],
             ),
           Expanded(
             child: InAppWebView(

@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
@@ -40,6 +41,11 @@ final class TorrentEngine {
   bool _disposed = false;
   bool _workerStopped = false;
   Future<void>? _disposing;
+
+  /// Whether the native engine is bundled on this OS (desktop only; the build
+  /// hook bundles nothing on Android and iOS).
+  static bool get isSupported =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   /// Allocated disk bytes, including resume data, without following symlinks.
   static Future<int> cacheDiskUsage(String path) => Isolate.run(() {
