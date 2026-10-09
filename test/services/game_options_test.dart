@@ -50,6 +50,23 @@ void main() {
       'pad': '0',
       'fps': '0',
     });
+    expect(const GameOptions(engineBuild: EngineBuild.mem32).query, {'mem32': '1'});
+    expect(const GameOptions(engineBuild: EngineBuild.mem64).query, {'mem32': '0'});
+    expect(
+      GameOptions.fromJson(const GameOptions(engineBuild: EngineBuild.mem32).toJson()).engineBuild,
+      EngineBuild.mem32,
+    );
+  });
+
+  test('the engine build defaults to this platform (desktop test host: automatic) and counts only changes', () {
+    expect(GameOptions.platformDefaults.engineBuild, EngineBuild.auto);
+    expect(GameOptions.fromJson(null).engineBuild, EngineBuild.auto);
+    expect(GameOptions.fromJson('{"engineBuild":"bogus"}').engineBuild, EngineBuild.auto);
+    for (final b in EngineBuild.values) {
+      expect(GameOptions.fromJson(GameOptions(engineBuild: b).toJson()).engineBuild, b);
+    }
+    expect(GameOptions.platformDefaults.changedCount, 0);
+    expect(const GameOptions(engineBuild: EngineBuild.mem32, showFps: true).changedCount, 2);
   });
 
   test('saves and loads, and survives bad or foreign data', () {

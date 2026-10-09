@@ -333,6 +333,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            tool/release
+
+      # The release description is the version's CHANGELOG.md section (GitHub's generated notes follow it); a version tag without one fails here.
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version != '' && inputs.version || format('manual-build-{0}', github.run_number) }}
+        run: |
+          if [[ "$TAG" == v* ]]; then tool/release/release_notes.sh "$TAG" > release-notes.md; else : > release-notes.md; fi
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -347,6 +360,7 @@ jobs:
           # Tag pushes use their own tag; manual runs use the input or a run-scoped fallback.
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version != '' && inputs.version || format('manual-build-{0}', github.run_number) }}
           draft: ${{ github.ref_type != 'tag' }}
+          body_path: release-notes.md
           prerelease: false
           generate_release_notes: true
           # Same list in publish-from-run below.
@@ -384,6 +398,12 @@ jobs:
           built=$(git rev-parse "$sha^{tree}") here=$(git rev-parse "HEAD^{tree}")
           [ "$built" = "$here" ] || { echo "::error::run $FROM_RUN built a different tree ($built) than $GITHUB_REF ($here)"; exit 1; }
 
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ inputs.version }}
+        run: |
+          if [[ "$TAG" == v* ]]; then tool/release/release_notes.sh "$TAG" > release-notes.md; else : > release-notes.md; fi
+
       - uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.from_run }}
@@ -399,6 +419,7 @@ jobs:
         with:
           tag_name: ${{ inputs.version != '' && inputs.version || format('manual-build-{0}', github.run_number) }}
           target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
           draft: ${{ !inputs.publish }}
           prerelease: false
           generate_release_notes: true
