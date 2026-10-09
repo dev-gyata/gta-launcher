@@ -116,7 +116,7 @@ Torrent pieces, resume state, and verified extracted entries persist in the appl
 
 Automated checks use generated fixture torrents and local seeders, not public torrents.
 
-**Game options** sets how the game starts and runs, on every platform: start mode (ask, Story Mode, Sandbox Mode on either map) and new game, graphics profile (automatic, low memory, full), shadows in low memory, render scale, frame rate cap (60, 30, uncapped), the FPS counter, controller mode, touch controls, camera sensitivity, skipping the device check, and the engine build (automatic, 64-bit, or 32-bit). The launcher passes them to the game page as URL options (`?mode=`, `?low=`, `?scale=`, `?fps=`, `?showfps=`, `?pad=`, `?touch=`, `?padsens=`, `?nocheck=`, `?mem32=`), so they also work by hand in a browser.
+**Game options** sets how the game starts and runs, on every platform: start mode (ask, Story Mode, Sandbox Mode on either map) and new game, graphics profile (automatic, low memory, full), shadows in low memory, render scale, frame rate cap (60, 30, uncapped), the FPS counter, controller mode, touch controls, camera sensitivity, skipping the device check, and the engine build (32-bit by default on phones and tablets, where 64-bit can be chosen on Android; automatic on desktop: 64-bit in Chrome and Edge, 32-bit in Safari). The launcher passes them to the game page as URL options (`?mode=`, `?low=`, `?scale=`, `?fps=`, `?showfps=`, `?pad=`, `?touch=`, `?padsens=`, `?nocheck=`, `?mem32=`), so they also work by hand in a browser.
 
 The game screen has buttons for **Launcher** (back), **Reload**, **Open in browser** and **Full screen**. You can switch the **Play in app** toggle off to always use the browser instead.
 
@@ -163,13 +163,13 @@ OpenSSL paths are configured under `hooks.user_defines.torrent_engine` in the ro
 CI (`.github/workflows/release.yml`, Flutter stable) builds Windows, macOS (arm64), Linux (x64) and Android on their own runners and publishes the archives to [GitHub Releases](https://github.com/dev-gyata/gta-launcher/releases):
 
 ```
-# 1. Bump `version:` in pubspec.yaml and commit
+# 1. Bump `version:` in pubspec.yaml, move CHANGELOG.md's Unreleased entries under the new version, and commit
 # 2. Tag and push — the tag name becomes the release name
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Pushing a `v*` tag creates (or updates) that tag's release with the four binaries and auto-generated notes. To test without tagging, run the workflow from the Actions tab: leave `publish` disabled to verify all desktop builds without creating a release. Enable it only when you intend to publish a draft; `version` optionally selects its tag, otherwise the draft uses `manual-build-<run>`. Windows/macOS native integration and bundle compatibility checks run before packaging, and both extracted archives are checked. The Foundation plugin is constrained below 2.6 to avoid Flutter's macOS 13 native-asset minimum.
+Pushing a `v*` tag creates (or updates) that tag's release with the binaries; its description is the version's CHANGELOG.md section (the build fails if there is none), followed by GitHub's generated notes and auto-generated notes. To test without tagging, run the workflow from the Actions tab: leave `publish` disabled to verify all desktop builds without creating a release. Enable it only when you intend to publish a draft; `version` optionally selects its tag, otherwise the draft uses `manual-build-<run>`. Windows/macOS native integration and bundle compatibility checks run before packaging, and both extracted archives are checked. The Foundation plugin is constrained below 2.6 to avoid Flutter's macOS 13 native-asset minimum.
 
 To publish a build that already ran, without rebuilding (for example the branch build of a PR you just merged), run the workflow on `main` with `from_run` set to that run's ID, `version` set to the new tag and `publish` enabled (disabled makes a draft). It only publishes if that run succeeded and built exactly the same files as the selected branch.
 

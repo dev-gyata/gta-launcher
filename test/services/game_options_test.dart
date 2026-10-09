@@ -58,6 +58,17 @@ void main() {
     );
   });
 
+  test('the engine build defaults to this platform (desktop test host: automatic) and counts only changes', () {
+    expect(GameOptions.platformDefaults.engineBuild, EngineBuild.auto);
+    expect(GameOptions.fromJson(null).engineBuild, EngineBuild.auto);
+    expect(GameOptions.fromJson('{"engineBuild":"bogus"}').engineBuild, EngineBuild.auto);
+    for (final b in EngineBuild.values) {
+      expect(GameOptions.fromJson(GameOptions(engineBuild: b).toJson()).engineBuild, b);
+    }
+    expect(GameOptions.platformDefaults.changedCount, 0);
+    expect(const GameOptions(engineBuild: EngineBuild.mem32, showFps: true).changedCount, 2);
+  });
+
   test('saves and loads, and survives bad or foreign data', () {
     const o = GameOptions(startMode: StartMode.story, renderScale: 0.6, touch: TouchControls.off);
     expect(GameOptions.fromJson(o.toJson()).query, o.query);

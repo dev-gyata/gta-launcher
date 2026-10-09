@@ -66,7 +66,7 @@ class _LauncherPageState extends State<LauncherPage> {
   bool _clearingCache = false;
   bool _disposed = false;
   bool _playInApp = true;
-  GameOptions _gameOptions = GameOptions.defaults;
+  GameOptions _gameOptions = GameOptions.platformDefaults;
   int? _cacheBytes;
   String? _error;
 
@@ -824,9 +824,9 @@ class _LauncherPageState extends State<LauncherPage> {
                           onPressed: _busy ? null : _editGameOptions,
                           icon: const Icon(Icons.tune),
                           label: Text(
-                            _gameOptions.query.isEmpty
+                            _gameOptions.changedCount == 0
                                 ? 'Game options'
-                                : 'Game options (${_gameOptions.query.length} set)',
+                                : 'Game options (${_gameOptions.changedCount} set)',
                           ),
                         ),
                         if (widget.inApp.available && !Platform.isIOS)

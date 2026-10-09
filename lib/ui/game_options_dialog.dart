@@ -1,5 +1,8 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
+import '../services/device.dart';
 import '../services/game_options.dart';
 
 /// Edits the game options (passed to the game page as URL options).
@@ -18,7 +21,14 @@ class _GameOptionsDialogState extends State<GameOptionsDialog> {
 
   void _set(GameOptions o) => setState(() => _o = o);
 
-  Widget _choice<T>(String label, T value, Map<T, String> options, ValueChanged<T> onChanged, {String? help}) {
+  Widget _choice<T>(
+    String label,
+    T value,
+    Map<T, String> options,
+    ValueChanged<T> onChanged, {
+    String? help,
+    Set<T> disabled = const {},
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: DropdownButtonFormField<T>(
@@ -31,7 +41,10 @@ class _GameOptionsDialogState extends State<GameOptionsDialog> {
           border: const OutlineInputBorder(),
           isDense: true,
         ),
-        items: [for (final e in options.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+        items: [
+          for (final e in options.entries)
+            DropdownMenuItem(value: e.key, enabled: !disabled.contains(e.key), child: Text(e.value)),
+        ],
         onChanged: (v) {
           if (v != null) onChanged(v);
         },
@@ -167,15 +180,30 @@ class _GameOptionsDialogState extends State<GameOptionsDialog> {
               (v) => _set(o.copyWith(lookSensitivity: v)),
             ),
             _heading('Advanced'),
-            _choice(
-              'Engine build',
-              o.engineBuild,
-              const {EngineBuild.auto: 'Automatic', EngineBuild.mem64: '64-bit', EngineBuild.mem32: '32-bit'},
-              (v) => _set(o.copyWith(engineBuild: v)),
-              help:
-                  'Automatic: 32-bit on Android, Safari and iPad/iPhone, 64-bit elsewhere. 32-bit is converted once on first start, '
-                  'then cached; it ran steadier in testing. Safari and iOS can only run 32-bit.',
-            ),
+            // Phones and tablets: 32-bit is the selected default (no "Automatic"); iPhone/iPad cannot run 64-bit at all.
+            if (isMobile)
+              _choice(
+                'Engine build',
+                o.effectiveEngineBuild == EngineBuild.mem64 ? EngineBuild.mem64 : EngineBuild.mem32,
+                {
+                  EngineBuild.mem32: '32-bit (recommended)',
+                  EngineBuild.mem64: Platform.isIOS ? '64-bit (not supported on iPhone/iPad)' : '64-bit',
+                },
+                (v) => _set(o.copyWith(engineBuild: v)),
+                disabled: Platform.isIOS ? const {EngineBuild.mem64} : const {},
+                help:
+                    '32-bit is converted once on first start, then cached, and runs steadier. 64-bit needs Chrome with 64-bit WebAssembly.',
+              )
+            else
+              _choice(
+                'Engine build',
+                o.engineBuild,
+                const {EngineBuild.auto: 'Automatic', EngineBuild.mem64: '64-bit', EngineBuild.mem32: '32-bit'},
+                (v) => _set(o.copyWith(engineBuild: v)),
+                help:
+                    'Automatic: 64-bit in Chrome and Edge, 32-bit in Safari. 32-bit is converted once on first start, '
+                    'then cached; it ran steadier in testing.',
+              ),
             _switch(
               'Skip the device check',
               o.skipDeviceCheck,
@@ -186,7 +214,7 @@ class _GameOptionsDialogState extends State<GameOptionsDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => _set(GameOptions.defaults), child: const Text('Reset')),
+        TextButton(onPressed: () => _set(GameOptions.platformDefaults), child: const Text('Reset')),
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.of(context).pop(_o), child: const Text('Save')),
       ],

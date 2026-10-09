@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
+
+import 'device.dart';
 
 /// How the game starts.
 enum StartMode {
@@ -88,6 +91,20 @@ class GameOptions {
 
   static const defaults = GameOptions();
 
+  /// The defaults on this platform: phones and tablets run the 32-bit engine build (steadier, and the only one WebKit can run) unless
+  /// the player picks 64-bit.
+  static GameOptions get platformDefaults => isMobile ? const GameOptions(engineBuild: EngineBuild.mem32) : defaults;
+
+  /// The engine build actually used: iPhone/iPad (WebKit) cannot run 64-bit, so a 64-bit choice saved elsewhere falls back to 32-bit there.
+  EngineBuild get effectiveEngineBuild =>
+      Platform.isIOS && engineBuild == EngineBuild.mem64 ? EngineBuild.mem32 : engineBuild;
+
+  /// How many options differ from this platform's defaults (shown on the Game options button).
+  int get changedCount {
+    final mine = query, base = platformDefaults.query;
+    return {...mine.keys, ...base.keys}.where((k) => mine[k] != base[k]).length;
+  }
+
   /// The URL query for the game page; empty when everything is default.
   Map<String, String> get query => {
     if (startMode == StartMode.story) 'mode': 'story',
@@ -107,8 +124,8 @@ class GameOptions {
     if (touch == TouchControls.on) 'touch': '1',
     if (touch == TouchControls.off) 'touch': '0',
     if (skipDeviceCheck) 'nocheck': '1',
-    if (engineBuild == EngineBuild.mem64) 'mem32': '0',
-    if (engineBuild == EngineBuild.mem32) 'mem32': '1',
+    if (effectiveEngineBuild == EngineBuild.mem64) 'mem32': '0',
+    if (effectiveEngineBuild == EngineBuild.mem32) 'mem32': '1',
   };
 
   /// [url] with these options as its query.
@@ -191,7 +208,7 @@ class GameOptions {
       lookSensitivity: number('lookSensitivity', 1.0, 0.25, 3.0),
       touch: pick(TouchControls.values, 'touch', TouchControls.auto),
       skipDeviceCheck: flag('skipDeviceCheck'),
-      engineBuild: pick(EngineBuild.values, 'engineBuild', EngineBuild.auto),
+      engineBuild: pick(EngineBuild.values, 'engineBuild', platformDefaults.engineBuild),
     );
   }
 }
