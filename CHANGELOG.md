@@ -5,6 +5,10 @@ All notable changes to the playgta5 Launcher. Each release on the [Releases page
 
 ## [Unreleased]
 
+### Changed
+
+- Graphics chips without BC textures (iPhones and A-chip iPads, most Android phones) no longer stop at *the graphics chip has no BC texture support*: the game decodes its textures as they load and starts with the low-memory settings. Decoded textures take 4-8 times the graphics memory, so these devices may still run out of memory.
+
 ## [1.4.2] - 2026-10-09
 
 ### Added
