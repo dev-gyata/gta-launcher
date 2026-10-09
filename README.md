@@ -58,7 +58,7 @@ The app needs GTK 3 runtime libraries, typically installed on desktop distributi
 
 The Android app runs the same game server on the device and opens the game in Chrome. Android's built-in WebView cannot give the game the shared memory it needs. Whether a phone or tablet can actually run the game depends on its hardware, and most phones today cannot:
 
-- Chrome 133 or newer (64-bit WebAssembly and WebGPU).
+- A current Chrome with WebGPU. The game runs as a 32-bit build on Android (converted once on first start, then cached): it is steadier and a little faster than the 64-bit one.
 - A graphics chip with WebGPU **BC texture support** (`texture-compression-bc`). The game's textures are stored in that format, and most phone GPUs (Adreno, Mali) don't support it; some high-end tablets do.
 - About 8 GB of RAM: the game reserves 3 GB at start.
 - About 20 GB of free storage for the game data.

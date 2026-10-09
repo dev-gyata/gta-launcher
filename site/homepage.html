@@ -566,8 +566,10 @@ async function deviceGaps() {
 }
 const gaps = crossOriginIsolated && q.get('nocheck') !== '1' ? await deviceGaps() : [];
 // 32-bit build: WebKit (Safari, every iOS browser) has no WebAssembly memory64 (a module with one shared 64-bit memory: limits flags 7 = maximum | shared |
-// 64-bit), so loader.js lowers game.wasm to 32-bit memory once (binaryen.js) and game.js runs in that mode. ?mem32=1 forces it, ?mem32=0 forbids it.
-const mem32 = q.get('mem32') === '1' || (q.get('mem32') !== '0' && !WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 4, 1, 7, 1, 1])));
+// 64-bit), so loader.js lowers game.wasm to 32-bit memory once (binaryen.js) and game.js runs in that mode. Android uses it as well: 32-bit memory needs no
+// explicit bounds checks (measured in desktop Chrome, same scene, uncapped: ~5 % more FPS, worst samples 85-92 instead of 33-56, a few seconds faster to the
+// world), and in the Android emulator it reached the world where the 64-bit build lost its GPU while loading. ?mem32=1 forces it, ?mem32=0 forbids it.
+const mem32 = q.get('mem32') === '1' || (q.get('mem32') !== '0' && (/Android/.test(navigator.userAgent) || !WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 4, 1, 7, 1, 1]))));
 if (!crossOriginIsolated) { document.getElementById('label').textContent = 'not cross-origin isolated: open the page over https (or localhost); the server sends COOP/COEP'; document.getElementById('label').style.color = '#e66'; }
 else if (gaps.length) {
 	const label = document.getElementById('label');
