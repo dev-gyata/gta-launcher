@@ -1,15 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:torrent_engine/torrent_engine.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../server/mirror_server.dart';
 import '../server/site_files.dart';
+import '../services/device.dart';
 import '../services/in_app_support.dart';
 import '../services/mirror_validator.dart';
+import '../services/server_service.dart';
 import '../services/settings.dart';
 import '../services/source_manager.dart';
 import '../sources/mirror_source.dart';
@@ -60,6 +65,16 @@ class _LauncherPageState extends State<LauncherPage> {
   int? _cacheBytes;
   String? _error;
 
+  /// Phones and tablets: stops the server once the app has been in the
+  /// background this long (the player left the game without quitting).
+  static const _backgroundLimit = Duration(minutes: 5);
+
+  /// Phones and tablets, game in the browser: stops the server once the game
+  /// page has sent nothing (not even its 30 s heartbeat) for this long.
+  static const _idleLimit = Duration(minutes: 5);
+  Timer? _backgroundStop;
+  Timer? _idleCheck;
+
   bool get _running => _server?.isRunning ?? false;
   bool get _busy => _loading || _starting || _stopping || _clearingCache;
   bool get _useInApp => widget.inApp.available && _playInApp;
@@ -77,7 +92,15 @@ class _LauncherPageState extends State<LauncherPage> {
         await _stop();
         return AppExitResponse.exit;
       },
+      // Phones and tablets never ask to exit: the app closes or is put away.
+      onDetach: isMobile ? () => unawaited(_stop()) : null,
+      onHide: isMobile ? _onHide : null,
+      onShow: isMobile ? _onShow : null,
     );
+    ServerService.listen(() {
+      _appendLog('Stop pressed in the notification');
+      unawaited(_stop());
+    });
     if (!widget.inApp.available) {
       _appendLog('Playing in the browser: ${widget.inApp.reason}');
     }
@@ -95,8 +118,10 @@ class _LauncherPageState extends State<LauncherPage> {
       final playInApp = await widget.settings.playInApp();
       if (!mounted) return;
       setState(() {
-        _sourceKind = kind;
-        _sourceController.text = _sourceValues[kind] ?? '';
+        _sourceKind = kind == SourceKind.magnet && !TorrentEngine.isSupported
+            ? SourceKind.local
+            : kind;
+        _sourceController.text = _sourceValues[_sourceKind] ?? '';
         final path = _sourceValues[SourceKind.local];
         if (path != null && path.isNotEmpty) _setPicked(path);
         _portController.text = '$port';
@@ -115,7 +140,34 @@ class _LauncherPageState extends State<LauncherPage> {
     _sourceValues[SourceKind.local] = path;
   }
 
+  /// Android has no folder picker that gives a file path, so the game data
+  /// goes into the app's own folder on the device storage (copied over USB or
+  /// with `adb push`); "Check again" looks there.
+  Future<String?> _androidGameFolder() async {
+    final base = await getExternalStorageDirectory();
+    if (base == null) return null;
+    final dir = Directory('${base.path}${Platform.pathSeparator}game');
+    await dir.create(recursive: true);
+    return dir.path;
+  }
+
   Future<void> _chooseFolder() async {
+    if (Platform.isAndroid) {
+      final path = await _androidGameFolder();
+      if (path == null || !mounted || _busy || _running) return;
+      setState(() => _setPicked(path));
+      if (_mirrorRoot == null) {
+        _appendLog(
+          'Copy the playgta5.com folder into $path (over USB, or adb push), then press Check again.',
+        );
+      }
+      try {
+        await widget.settings.setSourceValue(SourceKind.local, path);
+      } catch (e) {
+        if (mounted) setState(() => _error = 'Could not save folder: $e');
+      }
+      return;
+    }
     final path = await getDirectoryPath(confirmButtonText: 'Use this folder');
     if (path == null || !mounted || _busy || _running) return;
     setState(() => _setPicked(path));
@@ -277,6 +329,15 @@ class _LauncherPageState extends State<LauncherPage> {
     }
     final cleanup = Completer<void>();
     _stopCleanup = cleanup;
+    _backgroundStop?.cancel();
+    _backgroundStop = null;
+    _idleCheck?.cancel();
+    _idleCheck = null;
+    unawaited(
+      ServerService.stop().catchError(
+        (Object e) => _appendLog('Could not stop the notification: $e'),
+      ),
+    );
     _cancellation?.cancel();
     ++_generation;
     final server = _server;
@@ -339,8 +400,8 @@ class _LauncherPageState extends State<LauncherPage> {
   }
 
   Future<void> _openInApp(Uri url) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final toBrowser = await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
         builder: (_) => GamePage(
           url: url,
           onLog: _appendLog,
@@ -348,6 +409,55 @@ class _LauncherPageState extends State<LauncherPage> {
         ),
       ),
     );
+    if (!isMobile) return;
+    // Phones and tablets: leaving the game ends it, so the server stops with
+    // it, unless the player moved the game to the browser.
+    if (toBrowser == true) {
+      await _openBrowser(url);
+    } else {
+      await _stop();
+    }
+  }
+
+  void _onHide() {
+    // The browser keeps the server busy while the app is in the background;
+    // the idle check covers that case.
+    if (!_running || _idleCheck != null) return;
+    _backgroundStop?.cancel();
+    _backgroundStop = Timer(_backgroundLimit, () {
+      _appendLog('Stopped the server after 5 minutes in the background');
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+      unawaited(_stop());
+    });
+  }
+
+  void _onShow() {
+    _backgroundStop?.cancel();
+    _backgroundStop = null;
+  }
+
+  /// Phones and tablets, game in the browser: a foreground service keeps the
+  /// app alive (Android would otherwise freeze the server within a minute),
+  /// and the server stops once the game page has gone quiet.
+  Future<void> _watchBrowserGame(Uri url) async {
+    if (!isMobile || _idleCheck != null) return;
+    // Chrome coming up hid this app, possibly before this ran: the browser
+    // game is not "left in the background".
+    _backgroundStop?.cancel();
+    _backgroundStop = null;
+    try {
+      await ServerService.start(url);
+    } catch (e) {
+      _appendLog('Could not start the server notification: $e');
+    }
+    _idleCheck = Timer.periodic(const Duration(seconds: 30), (_) {
+      final last = _server?.lastRequest;
+      if (last != null && DateTime.now().difference(last) < _idleLimit) return;
+      _appendLog(
+        'The game page has been quiet for 5 minutes: stopping the server',
+      );
+      unawaited(_stop());
+    });
   }
 
   Future<void> _setPlayInApp(bool value) async {
@@ -361,8 +471,11 @@ class _LauncherPageState extends State<LauncherPage> {
 
   Future<void> _openBrowser(Uri url) async {
     try {
-      if (!await launchUrl(url, mode: LaunchMode.externalApplication) &&
-          mounted) {
+      // Phones and tablets: the server's keep-alive service (and its
+      // notification permission prompt) comes first, then the browser.
+      await _watchBrowserGame(url);
+      final opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
         setState(
           () => _error = 'Could not open the browser. Visit $url manually.',
         );
@@ -396,6 +509,8 @@ class _LauncherPageState extends State<LauncherPage> {
     _disposed = true;
     ++_generation;
     _cancellation?.cancel();
+    _backgroundStop?.cancel();
+    _idleCheck?.cancel();
     _lifecycle.dispose();
     unawaited(_logSub?.cancel());
     unawaited(_server?.dispose());
@@ -419,205 +534,225 @@ class _LauncherPageState extends State<LauncherPage> {
     final theme = Theme.of(context);
     final url = _server?.url;
     return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: LayoutBuilder(
-          builder: (context, constraints) => SingleChildScrollView(
-            child: SizedBox(
-              height: constraints.maxHeight < 640 ? 640 : constraints.maxHeight,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'playgta5 Launcher',
-                    style: theme.textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Choose a game source, then press Start.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: SegmentedButton<SourceKind>(
-                      segments: const [
-                        ButtonSegment(
-                          value: SourceKind.local,
-                          label: Text('Local'),
-                          icon: Icon(Icons.folder_outlined),
-                        ),
-                        ButtonSegment(
-                          value: SourceKind.http,
-                          label: Text('HTTP'),
-                          icon: Icon(Icons.link),
-                        ),
-                        ButtonSegment(
-                          value: SourceKind.magnet,
-                          label: Text('Magnet'),
-                          icon: Icon(Icons.download_outlined),
-                        ),
-                      ],
-                      selected: {_sourceKind},
-                      onSelectionChanged: _busy || _running
-                          ? null
-                          : (selection) => _selectSource(selection.single),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (_sourceKind == SourceKind.local)
-                    _FolderRow(
-                      pickedPath: _pickedPath,
-                      valid: _mirrorRoot != null,
-                      enabled: !_running && !_busy,
-                      onChoose: _chooseFolder,
-                    )
-                  else
-                    TextField(
-                      key: const Key('source-input'),
-                      controller: _sourceController,
-                      enabled: !_running && !_busy,
-                      minLines: 1,
-                      maxLines: 3,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        labelText: _sourceKind == SourceKind.http
-                            ? 'HTTP folder URL'
-                            : 'Magnet link',
-                        hintText: _sourceKind == SourceKind.http
-                            ? 'https://example.com/playgta5.com/'
-                            : 'magnet:?xt=urn:btih:…',
-                        isDense: true,
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Torrent cache: ${_cacheBytes == null ? 'checking…' : _formatBytes(_cacheBytes!)}',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _busy || _running ? null : _clearCache,
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('Clear torrent cache'),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    'Torrent pieces and prepared ZIP files stay cached until you clear them. No automatic eviction.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 120,
-                        child: TextField(
-                          controller: _portController,
-                          enabled: !_running && !_busy,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                          decoration: const InputDecoration(
-                            labelText: 'Port',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      if (widget.inApp.available)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Switch(
-                              value: _playInApp,
-                              onChanged: _busy ? null : _setPlayInApp,
-                            ),
-                            const Text('Play in app'),
-                          ],
-                        ),
-                      if (_running) ...[
-                        if (widget.inApp.available)
-                          OutlinedButton.icon(
-                            onPressed: _busy
-                                ? null
-                                : () => _play(url!, inApp: true),
-                            icon: const Icon(Icons.sports_esports),
-                            label: const Text('Play'),
-                          ),
-                        OutlinedButton.icon(
-                          onPressed: _busy ? null : () => _openBrowser(url!),
-                          icon: const Icon(Icons.open_in_browser),
-                          label: const Text('Open in browser'),
-                        ),
-                      ],
-                      if (_running || (_starting && !_stopping))
-                        FilledButton.tonalIcon(
-                          onPressed: _stopping ? null : _stop,
-                          icon: const Icon(Icons.stop),
-                          label: const Text('Stop'),
-                        )
-                      else
-                        FilledButton.icon(
-                          onPressed: _busy || !_canStart ? null : _start,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Start'),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (_starting || _stopping) ...[
-                    const LinearProgressIndicator(),
-                    const SizedBox(height: 8),
+      // SafeArea: on phones the layout would otherwise run under the status bar.
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              child: SizedBox(
+                height: constraints.maxHeight < 640
+                    ? 640
+                    : constraints.maxHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                     Text(
-                      _stopping
-                          ? 'Stopping and cleaning up…'
-                          : 'Preparing source… compressed ZIP entries may need extraction before play.',
+                      'playgta5 Launcher',
+                      style: theme.textTheme.headlineSmall,
                     ),
-                  ] else
-                    _StatusLine(running: _running, url: url, error: _error),
-                  const SizedBox(height: 4),
-                  Text(
-                    _useInApp
-                        ? 'The game opens in this window. If it does not run, use Open in browser with Chrome or Edge.'
-                        : 'Use Chrome or Edge. The game needs WebGPU.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(8),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose a game source, then press Start.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
-                      child: ListView.builder(
-                        controller: _logScroll,
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _logLines.length,
-                        itemBuilder: (_, i) => Text(
-                          _logLines[i],
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            fontFamily: 'monospace',
+                    ),
+                    const SizedBox(height: 20),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SegmentedButton<SourceKind>(
+                        segments: [
+                          const ButtonSegment(
+                            value: SourceKind.local,
+                            label: Text('Local'),
+                            icon: Icon(Icons.folder_outlined),
+                          ),
+                          const ButtonSegment(
+                            value: SourceKind.http,
+                            label: Text('HTTP'),
+                            icon: Icon(Icons.link),
+                          ),
+                          // Torrents need the native engine, which is desktop only.
+                          if (TorrentEngine.isSupported)
+                            const ButtonSegment(
+                              value: SourceKind.magnet,
+                              label: Text('Magnet'),
+                              icon: Icon(Icons.download_outlined),
+                            ),
+                        ],
+                        selected: {_sourceKind},
+                        onSelectionChanged: _busy || _running
+                            ? null
+                            : (selection) => _selectSource(selection.single),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (_sourceKind == SourceKind.local)
+                      _FolderRow(
+                        pickedPath: _pickedPath,
+                        valid: _mirrorRoot != null,
+                        enabled: !_running && !_busy,
+                        onChoose: _chooseFolder,
+                        chooseLabel: Platform.isAndroid
+                            ? 'Check again'
+                            : 'Choose…',
+                      )
+                    else
+                      TextField(
+                        key: const Key('source-input'),
+                        controller: _sourceController,
+                        enabled: !_running && !_busy,
+                        minLines: 1,
+                        maxLines: 3,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          labelText: _sourceKind == SourceKind.http
+                              ? 'HTTP folder URL'
+                              : 'Magnet link',
+                          hintText: _sourceKind == SourceKind.http
+                              ? 'https://example.com/playgta5.com/'
+                              : 'magnet:?xt=urn:btih:…',
+                          isDense: true,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    if (TorrentEngine.isSupported) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Torrent cache: ${_cacheBytes == null ? 'checking…' : _formatBytes(_cacheBytes!)}',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: _busy || _running ? null : _clearCache,
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Clear torrent cache'),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        'Torrent pieces and prepared ZIP files stay cached until you clear them. No automatic eviction.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ] else
+                      Text(
+                        'The game data is about 20 GB: make sure the device has room for it.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: _portController,
+                            enabled: !_running && !_busy,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Port',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        if (widget.inApp.available)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Switch(
+                                value: _playInApp,
+                                onChanged: _busy ? null : _setPlayInApp,
+                              ),
+                              const Text('Play in app'),
+                            ],
+                          ),
+                        if (_running) ...[
+                          if (widget.inApp.available)
+                            OutlinedButton.icon(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _play(url!, inApp: true),
+                              icon: const Icon(Icons.sports_esports),
+                              label: const Text('Play'),
+                            ),
+                          OutlinedButton.icon(
+                            onPressed: _busy ? null : () => _openBrowser(url!),
+                            icon: const Icon(Icons.open_in_browser),
+                            label: const Text('Open in browser'),
+                          ),
+                        ],
+                        if (_running || (_starting && !_stopping))
+                          FilledButton.tonalIcon(
+                            onPressed: _stopping ? null : _stop,
+                            icon: const Icon(Icons.stop),
+                            label: const Text('Stop'),
+                          )
+                        else
+                          FilledButton.icon(
+                            onPressed: _busy || !_canStart ? null : _start,
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Start'),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (_starting || _stopping) ...[
+                      const LinearProgressIndicator(),
+                      const SizedBox(height: 8),
+                      Text(
+                        _stopping
+                            ? 'Stopping and cleaning up…'
+                            : 'Preparing source… compressed ZIP entries may need extraction before play.',
+                      ),
+                    ] else
+                      _StatusLine(running: _running, url: url, error: _error),
+                    const SizedBox(height: 4),
+                    Text(
+                      _useInApp
+                          ? 'The game opens in this window. If it does not run, use Open in browser with Chrome or Edge.'
+                          : Platform.isAndroid
+                          ? 'The game opens in Chrome. It needs WebGPU and a graphics chip with BC texture support.'
+                          : 'Use Chrome or Edge. The game needs WebGPU.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListView.builder(
+                          controller: _logScroll,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _logLines.length,
+                          itemBuilder: (_, i) => Text(
+                            _logLines[i],
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontFamily: 'monospace',
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -633,12 +768,14 @@ class _FolderRow extends StatelessWidget {
     required this.valid,
     required this.enabled,
     required this.onChoose,
+    required this.chooseLabel,
   });
 
   final String? pickedPath;
   final bool valid;
   final bool enabled;
   final VoidCallback onChoose;
+  final String chooseLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -679,7 +816,7 @@ class _FolderRow extends StatelessWidget {
         const SizedBox(width: 12),
         OutlinedButton(
           onPressed: enabled ? onChoose : null,
-          child: const Text('Choose…'),
+          child: Text(chooseLabel),
         ),
       ],
     );

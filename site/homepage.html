@@ -190,6 +190,7 @@ let stopTitle = () => {};
 // (where it reads -level, about 62 % into the load; it waits there if nothing was chosen, and the page then pulses the key caps); after that only the chosen
 // item stays. ?mode=story|sandbox chooses up front (with &map=env_test for Sandbox Mode on env_test).
 let startMode = q.get('mode') === 'story' ? 1 : q.get('mode') === 'sandbox' ? (q.get('map') === 'env_test' ? 3 : 2) : 0;
+let deviceBlocked = false;		// the device check below found something missing: the game is not started, so nothing may overwrite its message
 let startModeWord = null, startCommitted = false, pickingMap = false, waitingChoice = false;		// waitingChoice: the engine waits for the choice
 const ACTS = {		// button: text, key cap, key codes
 	back: ['Back', 'Backspace', ['Backspace']],
@@ -247,12 +248,143 @@ addEventListener('keydown', (e) => {
 	e.preventDefault(); e.stopImmediatePropagation();
 }, { capture: true });
 showModes();
+// ---- touch controls: phones and tablets only (a mobile OS whose main pointer is a finger; ?touch=1 forces them on, ?touch=0 off). An on-screen gamepad
+// that the controller loop below reads like a physical one when none is connected, so the game sees a pad: analog sticks, controller prompts, wheels.
+// Left part of the screen: a move stick where the thumb lands; the rest: drag to look (finger speed -> right stick). Shown once the world is up.
+const touch = (() => {
+	const forced = q.get('touch'), ua = navigator.userAgent;
+	const mobileOS = navigator.userAgentData?.mobile || /Android|iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+	if (forced === '0' || !(forced === '1' || (mobileOS && matchMedia('(pointer: coarse)').matches))) return null;
+	const style = document.createElement('style');
+	style.textContent = `
+		#touchpad { position: fixed; inset: 0; z-index: 6; display: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+		#touchpad.on { display: block; }
+		#touchpad .tb { position: absolute; display: flex; align-items: center; justify-content: center; box-sizing: border-box; border: .4vmin solid rgba(255, 255, 255, .55);
+			border-radius: 50%; background: rgba(0, 0, 0, .28); color: rgba(255, 255, 255, .85); font: bold 3.6vmin sans-serif; opacity: .55; }
+		#touchpad .tb.wide { border-radius: 2.5vmin; font-size: 3vmin; }
+		#touchpad .tb.on { background: rgba(255, 255, 255, .45); color: #000; }
+		#touchpad .stick { position: absolute; display: none; width: 28vmin; height: 28vmin; margin: -14vmin 0 0 -14vmin; border-radius: 50%; border: .4vmin solid rgba(255, 255, 255, .4); background: rgba(0, 0, 0, .2); pointer-events: none; }
+		#touchpad .knob { position: absolute; left: 50%; top: 50%; width: 11vmin; height: 11vmin; margin: -5.5vmin 0 0 -5.5vmin; border-radius: 50%; background: rgba(255, 255, 255, .5); }`;
+	document.head.appendChild(style);
+	const root = document.createElement('div');
+	root.id = 'touchpad';
+	document.body.appendChild(root);
+	const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes = [0, 0, 0, 0];
+	const pad = { id: 'Touch controls', index: -1, connected: true, mapping: 'standard', axes, buttons };
+	// [label, standard-mapping button, position (vmin from the safe-area edges), size (vmin), wide]
+	const L = 'left', R = 'right', T = 'top', B = 'bottom';
+	const LAYOUT = [
+		['A', 0, { [R]: 18, [B]: 5 }, [12, 12]], ['B', 1, { [R]: 5, [B]: 18 }, [12, 12]], ['X', 2, { [R]: 31, [B]: 18 }, [12, 12]], ['Y', 3, { [R]: 18, [B]: 31 }, [12, 12]],
+		['RT', 7, { [R]: 4, [B]: 47 }, [15, 10], 1], ['LT', 6, { [R]: 21, [B]: 47 }, [15, 10], 1],
+		['RB', 5, { [R]: 4, [T]: 4 }, [15, 9], 1], ['LB', 4, { [L]: 4, [T]: 4 }, [15, 9], 1],
+		['View', 8, { [L]: 'calc(50% - 16vmin)', [T]: 3 }, [14, 7], 1], ['Menu', 9, { [L]: 'calc(50% + 2vmin)', [T]: 3 }, [14, 7], 1],
+		['L3', 10, { [L]: 22, [T]: 4 }, [9, 9]], ['R3', 11, { [R]: 34, [B]: 4 }, [9, 9]],
+		['▲', 12, { [L]: 12, [T]: 21 }, [8, 8]], ['▼', 13, { [L]: 12, [T]: 39 }, [8, 8]], ['◀', 14, { [L]: 3, [T]: 30 }, [8, 8]], ['▶', 15, { [L]: 21, [T]: 30 }, [8, 8]],
+	];
+	const els = [];
+	for (const [label, index, pos, [w, h], wide] of LAYOUT) {
+		const el = document.createElement('div');
+		el.className = 'tb' + (wide ? ' wide' : '');
+		el.textContent = label;
+		el.dataset.index = index;
+		for (const [side, v] of Object.entries(pos)) el.style[side] = typeof v === 'number' ? `calc(env(safe-area-inset-${side}, 0px) + ${v}vmin)` : v;
+		el.style.width = w + 'vmin'; el.style.height = h + 'vmin';
+		root.appendChild(el);
+		els[index] = el;
+	}
+	const stickEl = document.createElement('div'), knob = document.createElement('div');
+	stickEl.className = 'stick'; knob.className = 'knob';
+	stickEl.appendChild(knob); root.appendChild(stickEl);
+	const sens = Math.max(0.1, Number(q.get('padsens')) || 1);
+	const vmin = () => Math.min(innerWidth, innerHeight) / 100;
+	const owners = new Map();		// pointerId -> { kind: 'button', index } | { kind: 'stick', x0, y0 } | { kind: 'look', x, y, dx, dy }
+	let lookX = 0, lookY = 0, lastPoll = 0, visible = false, ready = false, physical = false, wentFull = false;
+	const press = (index, on) => {
+		const held = on || [...owners.values()].some((o) => o.kind === 'button' && o.index === index);
+		buttons[index] = { pressed: held, touched: held, value: held ? 1 : 0 };
+		els[index]?.classList.toggle('on', held);
+	};
+	const moveStick = (o, x, y) => {
+		const r = 14 * vmin(), dx = (x - o.x0) / r, dy = (y - o.y0) / r, m = Math.hypot(dx, dy), k = m > 1 ? 1 / m : 1;
+		axes[0] = dx * k; axes[1] = dy * k;
+		knob.style.transform = `translate(${axes[0] * r}px, ${axes[1] * r}px)`;
+	};
+	root.addEventListener('pointerdown', (e) => {
+		e.preventDefault();
+		if (!wentFull) {		// fullscreen and landscape on the first touch (both need a gesture; either may be unsupported)
+			wentFull = true;
+			try { document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.then(() => screen.orientation?.lock?.('landscape')).catch(() => {}); } catch (err) {}
+		}
+		try { root.setPointerCapture(e.pointerId); } catch (err) {}
+		const btn = e.target.closest('.tb');
+		if (btn) { owners.set(e.pointerId, { kind: 'button', index: +btn.dataset.index }); press(+btn.dataset.index, true); return; }
+		if (e.clientX < innerWidth * 0.4 && ![...owners.values()].some((o) => o.kind === 'stick')) {
+			const o = { kind: 'stick', x0: e.clientX, y0: e.clientY };
+			owners.set(e.pointerId, o);
+			stickEl.style.left = e.clientX + 'px'; stickEl.style.top = e.clientY + 'px'; stickEl.style.display = 'block';
+			moveStick(o, e.clientX, e.clientY);
+			return;
+		}
+		owners.set(e.pointerId, { kind: 'look', x: e.clientX, y: e.clientY });
+	});
+	root.addEventListener('pointermove', (e) => {
+		const o = owners.get(e.pointerId);
+		if (!o) return;
+		if (o.kind === 'stick') moveStick(o, e.clientX, e.clientY);
+		else if (o.kind === 'look') { lookX += e.clientX - o.x; lookY += e.clientY - o.y; o.x = e.clientX; o.y = e.clientY; }
+	});
+	const up = (e) => {
+		const o = owners.get(e.pointerId);
+		if (!o) return;
+		owners.delete(e.pointerId);
+		if (o.kind === 'button') press(o.index, false);
+		else if (o.kind === 'stick') { axes[0] = axes[1] = 0; stickEl.style.display = 'none'; knob.style.transform = ''; }
+	};
+	root.addEventListener('pointerup', up);
+	root.addEventListener('pointercancel', up);
+	root.addEventListener('contextmenu', (e) => e.preventDefault());
+	const releaseAll = () => {
+		owners.clear(); lookX = lookY = 0;
+		axes.fill(0);
+		for (let i = 0; i < buttons.length; i++) press(i, false);
+		stickEl.style.display = 'none';
+	};
+	const update = () => {
+		const show = ready && !physical;
+		if (show === visible) return;
+		visible = show;
+		root.classList.toggle('on', show);
+		if (!show) releaseAll();
+	};
+	postLog('[page input] touch controls enabled (' + (forced === '1' ? '?touch=1' : 'mobile device') + ')');
+	return {
+		// The controls' state as a standard gamepad, for the controller loop; null while hidden (a physical pad is connected, or the world is not up yet)
+		gamepad: (now) => {
+			if (!visible) return null;
+			// look: finger speed -> right stick, smoothed over ~40 ms (touch moves and frames do not line up one to one, so a frame without a move must not
+			// snap the stick back); a finger crossing half the screen width in a second is full deflection. A finger that stops stops the camera within ~0.1 s.
+			const dt = lastPoll ? Math.max(0.001, Math.min(0.1, (now - lastPoll) / 1000)) : 0.016;
+			lastPoll = now;
+			const full = innerWidth * 0.5 / sens, k = 1 - Math.exp(-dt / 0.04);
+			const tx = Math.max(-1, Math.min(1, lookX / dt / full)), ty = Math.max(-1, Math.min(1, lookY / dt / full));
+			lookX = lookY = 0;
+			axes[2] += (tx - axes[2]) * k; axes[3] += (ty - axes[3]) * k;
+			if (Math.abs(axes[2]) < 0.02) axes[2] = 0;
+			if (Math.abs(axes[3]) < 0.02) axes[3] = 0;
+			pad.timestamp = now;
+			return pad;
+		},
+		physical: (connected) => { physical = connected; update(); },
+		ready: () => { ready = true; update(); },
+		releaseAll,
+	};
+})();
 // ---- controller: game.wasm imports no gamepad or XInput bridge. On this build the controller drives the game's own pad layer through engine
 // memory (installNativePad below: analog sticks and triggers, the console layout, controller prompts, rumble). Otherwise, or with ?pad=keys, the
 // Gamepad API is translated into the keys and mouse movement of the game's PC bindings (data/x64/data/control/default.meta and fixed.meta), with
 // digital movement and keyboard prompts. ?pad=0 turns the controller off, ?padsens= scales the right stick in the keyboard mapping.
 let padSink = null, padNative = null, padName = '';		// installInput's hooks into the input block, once the engine has published it
-if (q.get('pad') !== '0' && navigator.getGamepads) {
+if (q.get('pad') !== '0' && (navigator.getGamepads || touch)) {
 	// Keys per standard-mapping button. A: sprint, and accept in menus/phone. B: reload/light melee, and back. X: jump/handbrake. Y: enter/exit vehicle.
 	// LB: weapon wheel. RB: cover. LT/RT (6/7) are the right/left mouse buttons (aim/attack). Back: camera. Start: pause. L3: duck/stealth. R3: look behind.
 	// D-pad: arrows (phone, menus, radio).
@@ -266,7 +398,9 @@ if (q.get('pad') !== '0' && navigator.getGamepads) {
 		requestAnimationFrame(poll);
 		const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
 		last = now;
-		const gp = [...navigator.getGamepads()].find((p) => p && p.connected);
+		const real = navigator.getGamepads ? [...navigator.getGamepads()].find((p) => p && p.connected) : null;
+		touch?.physical(!!real);
+		const gp = real || touch?.gamepad(now);		// a physical controller wins over the touch controls
 		if (!gp) {
 			if (padName) { postLog('[page input] controller disconnected: ' + padName); padName = ''; prev = []; taken.clear(); padSink?.release(); }
 			return;
@@ -324,7 +458,12 @@ if (q.get('pad') !== '0' && navigator.getGamepads) {
 		if (m.choice && !startMode) { waitingChoice = true; modesEl.classList.add('ask'); showModes(); }		// the engine waits for the choice: showModes asks for it in the label
 		if (m.commit) { startCommitted = true; pickingMap = false; if (m.mode) startMode = m.mode; showModes(); }		// the engine took the choice
 		if (m.compiling !== undefined && !waitingChoice) { label.textContent = lastLabel = 'Preparing shaders'; target = Math.max(target, 99); }		// the world is up; the GPU worker holds it until its pipelines are compiled
-		if (m.world) { ready = true; hud.textContent = 'click the game to capture the mouse (Esc releases it, Shift+P switches keyboard mode, = shows FPS)' + (padName ? '. Controller connected' : ''); setTimeout(() => { hud.textContent = ''; }, 15000); }
+		if (m.world) {
+			ready = true;
+			touch?.ready();
+			hud.textContent = touch ? 'touch controls on (they hide while a controller is connected)' : 'click the game to capture the mouse (Esc releases it, Shift+P switches keyboard mode, = shows FPS)' + (padName ? '. Controller connected' : '');
+			setTimeout(() => { hud.textContent = ''; }, 15000);
+		}
 	};
 	// Between reports the bar creeps forward (at most 6 points past the last report) so a long stage does not look frozen.
 	const dataEl = document.getElementById('data');
@@ -332,7 +471,7 @@ if (q.get('pad') !== '0' && navigator.getGamepads) {
 	// Stall watchdog: nothing (no log line, no data, no progress) from any engine thread for 30 s while loading. A tab that ran out of memory dies ("Aw, Snap!") and cannot say so,
 	// but one that is thrashing or deadlocked can: show it, and leave a timestamped line in the server log for diagnosis.
 	setInterval(() => {
-		if (ready) return;
+		if (ready || deviceBlocked) return;
 		if (waitingChoice) { if (!startMode) { lastActivity = performance.now(); return; } waitingChoice = false; label.textContent = lastLabel; }
 		const quiet = (performance.now() - lastActivity) / 1000;
 		if (quiet > 30) {
@@ -394,6 +533,8 @@ if (remoteLog) {
 	};
 	new BroadcastChannel('game-log').onmessage = (ev) => { queue.push(ev.data); if (queue.length > 20000) queue.splice(0, queue.length - 20000); pump(); };
 }
+// Tell the launcher the page is still open (it stops its server on phones and tablets once the game page has been quiet for 5 minutes); harmless elsewhere.
+setInterval(() => fetch('/heartbeat', { method: 'HEAD', cache: 'no-store' }).catch(() => {}), 30000);
 // Release the io worker's exclusive storage handles as soon as this page goes away (a quick reload would otherwise find them locked and run without the store).
 addEventListener('pagehide', () => { try { new BroadcastChannel('game-io').postMessage('close'); } catch (e) {} });
 // Earlier versions cached the game data with a service worker (sw.js) and the Cache API: remove both, the io worker keeps its own store (io_worker.js).
@@ -405,7 +546,33 @@ async function dropOldCache() {
 }
 let lowMemory = false;		// set below (module scope: the ?mem readout further down also needs it)
 let startSize = [1280, 720], wantSize = null;		// set below (module scope: installInput uses them)
+// Device check before anything loads (phones and tablets often fall short): the engine is 64-bit wasm with shared memory, and the GPU worker creates the game's
+// textures in their BC formats as stored, with no fallback (most phone GPUs, Adreno and Mali, have no BC). Missing pieces are named on the loading screen
+// instead of a black screen; ?nocheck=1 starts anyway.
+async function deviceGaps() {
+	const gaps = [];
+	// a module with one shared 64-bit memory (memory section, limits flags 7 = has maximum | shared | 64-bit)
+	if (!WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 4, 1, 7, 1, 1]))) gaps.push('64-bit WebAssembly (memory64) is not supported by this browser');
+	let adapter = null;
+	try { adapter = navigator.gpu && await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) {}
+	if (!navigator.gpu) gaps.push('WebGPU is not available in this browser');
+	else if (!adapter) gaps.push('WebGPU found no usable graphics adapter');
+	else if (!adapter.features.has('texture-compression-bc')) gaps.push('the graphics chip has no BC texture support (texture-compression-bc), which the game\'s textures need');
+	postLog('[page env] device check: ' + (gaps.length ? gaps.join('; ') : 'ok') + (adapter?.info ? ' (adapter ' + [adapter.info.vendor, adapter.info.architecture, adapter.info.description].filter(Boolean).join(' ') + ')' : ''));
+	return gaps;
+}
+const gaps = crossOriginIsolated && q.get('nocheck') !== '1' ? await deviceGaps() : [];
 if (!crossOriginIsolated) { document.getElementById('label').textContent = 'not cross-origin isolated: open the page over https (or localhost); the server sends COOP/COEP'; document.getElementById('label').style.color = '#e66'; }
+else if (gaps.length) {
+	const label = document.getElementById('label');
+	label.textContent = 'This device cannot run the game: ' + gaps.join('; ') + '.';
+	label.style.color = '#e66';
+	label.parentElement.style.cssText += ';height:auto;max-width:900px;padding:6px 10px;white-space:normal;line-height:1.4';
+	document.getElementById('pct').hidden = true;
+	document.querySelector('.ls-spin')?.remove();
+	modesEl.style.display = 'none';
+	deviceBlocked = true;
+}
 else {
 	const offscreen = canvas.transferControlToOffscreen();
 	await dropOldCache();
@@ -696,7 +863,11 @@ function installNativePad(memory) {
 	const byte = (v) => Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)));
 	const stick = (x, y) => { const m = Math.hypot(x, y); if (m <= 0.1) return [0, 0]; const r = Math.min(1, (m - 0.1) / 0.9) / m; return [x * r, y * r]; };
 	const rumble = (m) => {
-		const gp = navigator.getGamepads()[gpIndex], act = gp && gp.vibrationActuator;
+		if (gpIndex < 0) {		// touch controls: the device's own vibration motor (on/off only; light rumble is left out); refreshed every 80 ms while it lasts
+			try { navigator.vibrate?.(Math.max(m[0], m[1]) > 0.25 ? 120 : 0); } catch (e) {}
+			return;
+		}
+		const gp = navigator.getGamepads?.()[gpIndex], act = gp && gp.vibrationActuator;
 		if (!act) return;
 		if (m[0] || m[1]) act.playEffect('dual-rumble', { duration: 120, strongMagnitude: m[0], weakMagnitude: m[1] }).catch(() => {});
 		else if (act.reset) act.reset().catch(() => {});
