@@ -319,7 +319,7 @@ jobs:
   # Publishes the artifacts of an earlier, verified Release run (e.g. the branch build of a merged PR) without rebuilding:
   # only when that run succeeded and built exactly the tree of the selected ref.
   publish-from-run:
-    name: Publish from run ${{ inputs.from_run }}
+    name: Publish from an earlier run
     if: ${{ inputs.from_run }}
     runs-on: ubuntu-latest
     permissions:
