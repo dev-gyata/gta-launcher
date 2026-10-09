@@ -34,6 +34,7 @@ struct Engine {
   std::vector<std::string> paths;
   std::map<int, std::vector<char>> pieces;
   std::set<int> requested;
+  std::set<int> reading;  // requested pieces already on disk, read directly (see te_poll)
 };
 static Engine& engine(void* p) { return *static_cast<Engine*>(p); }
 static void metadata(Engine& e) {
@@ -156,6 +157,7 @@ int te_poll(void* p) {
     for (auto a : alerts) {
       if (std::getenv("TORRENT_ENGINE_DEBUG")) std::cerr << a->message() << "\n";
       if (auto r = lt::alert_cast<lt::read_piece_alert>(a)) {
+        e.reading.erase(int(r->piece));
         if (!e.requested.count(int(r->piece))) continue;
         if (r->error) throw std::runtime_error("Cannot read verified torrent piece: " + r->error.message());
         e.pieces[int(r->piece)] = std::vector<char>(r->buffer.get(), r->buffer.get() + r->size);
@@ -168,6 +170,15 @@ int te_poll(void* p) {
       }
     }
     if (!e.info && e.torrent.status().has_metadata) metadata(e);
+    // A piece requested while libtorrent still checks the cache after a restart becomes available through that check, not through a
+    // download, so set_piece_deadline's alert_when_available never fires and the read waits forever (CI, offline reopen: "piece 1
+    // timeout" with the piece cached). Requested pieces that are on disk but not delivered are read directly.
+    if (e.info)
+      for (int piece : e.requested)
+        if (!e.pieces.count(piece) && !e.reading.count(piece) && e.torrent.have_piece(lt::piece_index_t(piece))) {
+          e.reading.insert(piece);
+          e.torrent.read_piece(lt::piece_index_t(piece));
+        }
     if (!e.error.empty()) return -1;
     return e.info ? 1 : 0;
   } catch (std::exception const& ex) { e.error = ex.what(); e.torrent.pause(); return -1; }
@@ -202,6 +213,7 @@ void te_release_piece(void* p, int piece) {
   auto& e=engine(p);
   e.requested.erase(piece);
   e.pieces.erase(piece);
+  e.reading.erase(piece);
   auto index=lt::piece_index_t(piece);
   e.torrent.reset_piece_deadline(index);
   e.torrent.piece_priority(index, lt::dont_download);
