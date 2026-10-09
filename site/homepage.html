@@ -247,11 +247,11 @@ addEventListener('keydown', (e) => {
 	e.preventDefault(); e.stopImmediatePropagation();
 }, { capture: true });
 showModes();
-// ---- controller: the engine has no gamepad input (WasmInputBlock carries only keyboard, mouse and text; game.wasm imports no gamepad or XInput
-// bridge), so the Gamepad API is translated into the keys and mouse movement of the game's PC bindings (data/x64/data/control/default.meta and
-// fixed.meta). Movement is digital (the left stick presses W/A/S/D), prompts stay keyboard glyphs and there is no rumble. ?pad=0 turns it off,
-// ?padsens= scales the right stick.
-let padSink = null, padName = '';		// padSink: installInput's hooks into the input block, once the engine has published it
+// ---- controller: game.wasm imports no gamepad or XInput bridge. On this build the controller drives the game's own pad layer through engine
+// memory (installNativePad below: analog sticks and triggers, the console layout, controller prompts, rumble). Otherwise, or with ?pad=keys, the
+// Gamepad API is translated into the keys and mouse movement of the game's PC bindings (data/x64/data/control/default.meta and fixed.meta), with
+// digital movement and keyboard prompts. ?pad=0 turns the controller off, ?padsens= scales the right stick in the keyboard mapping.
+let padSink = null, padNative = null, padName = '';		// installInput's hooks into the input block, once the engine has published it
 if (q.get('pad') !== '0' && navigator.getGamepads) {
 	// Keys per standard-mapping button. A: sprint, and accept in menus/phone. B: reload/light melee, and back. X: jump/handbrake. Y: enter/exit vehicle.
 	// LB: weapon wheel. RB: cover. LT/RT (6/7) are the right/left mouse buttons (aim/attack). Back: camera. Start: pause. L3: duck/stealth. R3: look behind.
@@ -277,6 +277,7 @@ if (q.get('pad') !== '0' && navigator.getGamepads) {
 		down.forEach((d, i) => { if (!d) taken.delete(i); else if (!prev[i] && PAD_TITLE[i] && titleKey(PAD_TITLE[i])) taken.add(i); });
 		prev = down;
 		if (!padSink) return;
+		if (padNative && padNative.apply(gp, down, taken)) return;
 		const vks = new Set();
 		down.forEach((d, i) => { if (d && !taken.has(i)) for (const code of PAD_KEYS[i] || []) vks.add(VK[code]); });
 		const [lx, ly] = deadZone(gp.axes[0] || 0, gp.axes[1] || 0);
@@ -657,7 +658,7 @@ function installInput(memory, block) {
 	// The controller loop (see "controller" above) drives these: the keys and buttons it holds this frame, and right-stick look as mouse movement
 	padSink = {
 		focused: () => Atomics.load(w, FOCUS) === 1,
-		release: () => { const was = [...padVK]; padVK.clear(); was.forEach(syncKey); padBtn = 0; syncBtn(); },
+		release: () => { const was = [...padVK]; padVK.clear(); was.forEach(syncKey); padBtn = 0; syncBtn(); padNative?.release(); },
 		apply: (vks, btn, dx, dy) => {
 			for (const vk of [...padVK]) if (!vks.has(vk)) { padVK.delete(vk); syncKey(vk); }
 			for (const vk of vks) if (!padVK.has(vk)) { padVK.add(vk); syncKey(vk); }
@@ -668,6 +669,76 @@ function installInput(memory, block) {
 				Atomics.store(w, MX, Math.max(0, Math.min(W - 1, Atomics.load(w, MX) + dx)));
 				Atomics.store(w, MY, Math.max(0, Math.min(H - 1, Atomics.load(w, MY) + dy)));
 			}
+		},
+	};
+	padNative = installNativePad(memory);
+}
+
+// ---- native controller, build 8b0b5899ed only. game.wasm keeps RAGE's pad layer (rage::ioPad, read by CPad and the control mapper), but ioPad::Update
+// only reads input while its pad index is below the joystick count, and the port never registers a joystick (the count stays 0). Registering one
+// neutral joystick makes ioPad::Update take its normal path, which merges each pad's override block into the pad and then clears it, so the block
+// is rewritten every millisecond. The game then treats the controller as a real pad: analog sticks and triggers, the console layout, its own
+// switch between keyboard and controller prompts, and rumble (ioPad::SetActuatorValue's motor values, forwarded to the Gamepad API).
+// The addresses come from game.wasm's code (ioPad::Update, CControlMgr::Update, ioPadActuatorDevice::Update). If pad 0 does not look as expected
+// the keyboard/mouse mapping is used instead.
+function installNativePad(memory) {
+	if (BASE !== '/b/8b0b5899ed' || q.get('pad') === 'keys') return null;
+	const PAD = 12840656;			// rage::ioPad pad 0 (136 bytes): +8 pad index, +20..23 live stick bytes, +52 motors changed, +66/+68 motor 0/1 (u16),
+									// override block: +108..111 LX LY RX RY (u8, 128 = centre), +112/113 L2 R2 (u8), +132 button bits (u32)
+	const STICK = 12839248, STICK_COUNT = 12839904;		// joystick records (164 bytes: int32 axes at +12..+40, int16 POV hat at +148) and their count
+	// ioPad button bits per standard-mapping button: A B X Y LB RB LT RT Back Start L3 R3 D-pad up down left right
+	const BITS = [64, 32, 128, 16, 4, 8, 1, 2, 256, 2048, 512, 1024, 4096, 16384, 32768, 8192];
+	const u8 = new Uint8Array(memory.buffer), dv = new DataView(memory.buffer);
+	let ok = null, active = false, state = null, gpIndex = -1, motors = [0, 0], lastPlay = 0;
+	const looksRight = () => dv.getUint32(PAD, true) !== 0 && dv.getUint32(PAD + 8, true) === 0 && dv.getUint32(PAD + 20, true) === 0x80808080
+		&& dv.getInt32(STICK_COUNT, true) === 0;
+	const neutral = () => { u8.fill(128, PAD + 108, PAD + 112); u8.fill(0, PAD + 112, PAD + 114); dv.setUint32(PAD + 132, 0, true); };
+	const byte = (v) => Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)));
+	const stick = (x, y) => { const m = Math.hypot(x, y); if (m <= 0.1) return [0, 0]; const r = Math.min(1, (m - 0.1) / 0.9) / m; return [x * r, y * r]; };
+	const rumble = (m) => {
+		const gp = navigator.getGamepads()[gpIndex], act = gp && gp.vibrationActuator;
+		if (!act) return;
+		if (m[0] || m[1]) act.playEffect('dual-rumble', { duration: 120, strongMagnitude: m[0], weakMagnitude: m[1] }).catch(() => {});
+		else if (act.reset) act.reset().catch(() => {});
+	};
+	setInterval(() => {
+		if (!active || !state) return;
+		u8[PAD + 108] = state.lx; u8[PAD + 109] = state.ly; u8[PAD + 110] = state.rx; u8[PAD + 111] = state.ry;
+		u8[PAD + 112] = state.l2; u8[PAD + 113] = state.r2;
+		dv.setUint32(PAD + 132, state.bits, true);
+		// rumble: motor strengths the game set this frame; refreshed while they last, since each effect is short
+		const m = [dv.getUint16(PAD + 66, true) / 65535, dv.getUint16(PAD + 68, true) / 65535], now = performance.now();
+		if (m[0] !== motors[0] || m[1] !== motors[1] || ((m[0] || m[1]) && now - lastPlay > 80)) { motors = m; lastPlay = now; rumble(m); }
+	}, 1);
+	return {
+		// Drives pad 0 from this frame's controller state; false when the native path is unavailable, so the caller uses the keyboard mapping
+		apply: (gp, down, taken) => {
+			if (ok === null) {
+				ok = looksRight();
+				postLog('[page input] native controller path ' + (ok ? 'on' : 'unavailable (unexpected engine memory); using the keyboard/mouse mapping'));
+			}
+			if (!ok) return false;
+			if (!active) {
+				for (let o = 12; o <= 40; o += 4) dv.setInt32(STICK + o, 32768, true);
+				dv.setInt16(STICK + 148, -1, true);
+				dv.setInt32(STICK_COUNT, 1, true);
+				active = true;
+			}
+			gpIndex = gp.index;
+			let bits = 0;
+			down.forEach((d, i) => { if (d && !taken.has(i) && BITS[i]) bits |= BITS[i]; });
+			const [lx, ly] = stick(gp.axes[0] || 0, gp.axes[1] || 0), [rx, ry] = stick(gp.axes[2] || 0, gp.axes[3] || 0);
+			const trigger = (i) => (taken.has(i) ? 0 : Math.round((gp.buttons[i]?.value || 0) * 255));
+			state = { bits, lx: byte(lx), ly: byte(ly), rx: byte(rx), ry: byte(ry), l2: trigger(6), r2: trigger(7) };
+			return true;
+		},
+		// Controller gone or window unfocused: unregister the joystick so nothing stays held, and stop rumbling
+		release: () => {
+			if (!active) return;
+			active = false; state = null;
+			neutral();
+			dv.setInt32(STICK_COUNT, 0, true);
+			if (motors[0] || motors[1]) { motors = [0, 0]; rumble(motors); }
 		},
 	};
 }

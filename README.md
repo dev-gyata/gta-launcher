@@ -74,23 +74,11 @@ If the webview can't run the game, a banner appears with an Open in browser butt
 
 ### Controller
 
-Xbox, PlayStation and other standard controllers work in the launcher window and in the browser. The game engine only reads keyboard and mouse, so the page translates the controller into the game's PC controls:
+Xbox, PlayStation and other standard controllers work in the launcher window and in the browser. The game uses the controller as a real gamepad: analog sticks and triggers, the console button layout (D-pad down opens the character wheel, LB the weapon wheel), on-screen prompts that switch to controller buttons once you press one, and vibration. Keyboard and mouse keep working alongside it, and prompts switch back when you use them.
 
-| Controller | Action | Sends |
-| --- | --- | --- |
-| Left stick | Move / steer, accelerate, brake | W A S D |
-| Right stick | Camera | Mouse movement |
-| LT / RT | Aim / shoot | Right / left mouse button |
-| A | Sprint; accept in menus and phone | Shift + Enter |
-| B | Reload, light melee; back in menus | R + Backspace |
-| X | Jump / handbrake | Space |
-| Y | Enter or exit vehicle | F |
-| LB / RB | Weapon wheel / cover | Tab / Q |
-| L3 / R3 | Stealth / look behind | Ctrl / C |
-| Back / Start | Camera view / pause menu | V / Esc |
-| D-pad | Phone, menus, radio | Arrow keys |
+On the start screen, A picks Story Mode, X picks Sandbox Mode and B goes back. Vibration needs browser support: Chrome and Edge (including the Windows app) support it; the macOS app depends on the system WebKit version.
 
-On the start screen, A picks Story Mode, X picks Sandbox Mode and B goes back. Limitations: movement and triggers are on/off rather than analog, on-screen prompts show keyboard keys, and there is no vibration. Add `?padsens=1.5` to the game URL to change camera speed, or `?pad=0` to turn the controller off.
+The launcher drives the game's own gamepad support through engine memory for build `8b0b5899ed`, without changing any game files. If that is unavailable it falls back to translating the controller into keyboard and mouse input (digital movement, keyboard prompts, no vibration). URL options: `?pad=keys` forces that fallback, `?padsens=1.5` sets its camera speed, and `?pad=0` turns the controller off.
 
 ## Build
 
