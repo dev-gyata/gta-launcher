@@ -264,6 +264,9 @@ const touch = (() => {
 		#touchpad .tb.wide { border-radius: 2.5vmin; font-size: 3vmin; }
 		#touchpad .tb.on { background: rgba(255, 255, 255, .45); color: #000; }
 		#touchpad .stick { position: absolute; display: none; width: 28vmin; height: 28vmin; margin: -14vmin 0 0 -14vmin; border-radius: 50%; border: .4vmin solid rgba(255, 255, 255, .4); background: rgba(0, 0, 0, .2); pointer-events: none; }
+		/* the start menu's buttons (Story Mode, Sandbox Mode, the maps) are tapped directly; on a phone the scaled title stage makes them ~13 px tall */
+		#ls-bars { transform: scale(1.8); transform-origin: 100% 100%; }
+		#modes button { padding: 0 6px; }
 		#touchpad .knob { position: absolute; left: 50%; top: 50%; width: 11vmin; height: 11vmin; margin: -5.5vmin 0 0 -5.5vmin; border-radius: 50%; background: rgba(255, 255, 255, .5); }`;
 	document.head.appendChild(style);
 	const root = document.createElement('div');
@@ -504,7 +507,8 @@ const hud = document.getElementById('hud');
 // the game (capture phase on window, before the input handlers; this build has debug key bindings).
 {
 	const el = document.getElementById('fps');
-	let on = false;
+	let on = q.get('showfps') === '1';		// the launcher's "Show FPS counter" option
+	if (on) { el.style.display = 'block'; el.textContent = '-- FPS'; }
 	new BroadcastChannel('game-fps').onmessage = (ev) => { if (on) el.textContent = Math.round(ev.data.fps) + ' FPS'; };
 	const isToggle = (e) => e.code === 'Equal' && !e.ctrlKey && !e.altKey && !e.metaKey;
 	addEventListener('keydown', (e) => {
@@ -556,7 +560,7 @@ async function deviceGaps() {
 	let adapter = null;
 	try { adapter = navigator.gpu && await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) {}
 	if (!navigator.gpu) gaps.push('WebGPU is not available in this browser');
-	else if (!adapter) gaps.push('WebGPU found no usable graphics adapter');
+	else if (!adapter) gaps.push('WebGPU found no usable graphics adapter' + (/Android/.test(navigator.userAgent) ? ' (Chrome may be hiding it on this graphics chip: in the launcher, use "Turn on WebGPU in Chrome", or set chrome://flags/#enable-unsafe-webgpu to Enabled)' : ''));
 	else if (!adapter.features.has('texture-compression-bc')) gaps.push('the graphics chip has no BC texture support (texture-compression-bc), which the game\'s textures need');
 	postLog('[page env] device check: ' + (gaps.length ? gaps.join('; ') : 'ok') + (adapter?.info ? ' (adapter ' + [adapter.info.vendor, adapter.info.architecture, adapter.info.description].filter(Boolean).join(' ') + ')' : ''));
 	return gaps;
