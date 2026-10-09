@@ -64,7 +64,9 @@ The Android app runs the same game server on the device and opens the game in Ch
 
 Before loading anything, the game page checks these and names whatever is missing, instead of showing a black screen (`?nocheck=1` skips the check).
 
-Sources on Android are **HTTP** and **Local**. Android has no folder picker that gives the app a file path, so for Local copy the `playgta5.com` folder into the app's folder (shown in the launcher log, under `Android/data/com.playgta5.playgta5_launcher/files/game`) over USB or with `adb push`, then press **Check again**. Torrents are desktop only for now.
+Sources on Android are **HTTP** and **Local**. For Local, **Choose…** asks once for Android's **All files access** (the game data is read by path, which the system folder picker cannot give), then opens a folder browser: open the folder that holds `playgta5.com` (a green tick shows when it is found) and press **Use this folder**. If you decline the permission, the launcher uses its own folder instead (`Android/data/com.playgta5.playgta5_launcher/files/game`, filled over USB or with `adb push`). Torrents are desktop only for now.
+
+If the game says *WebGPU found no usable graphics adapter*, Chrome may be hiding WebGPU on that graphics chip. **Turn on WebGPU in Chrome** in the launcher copies `chrome://flags/#enable-unsafe-webgpu` and opens Chrome (apps cannot open Chrome's settings pages directly): paste it into the address bar, set **Unsafe WebGPU Support** to **Enabled** and tap **Relaunch**. The setting is experimental and can make Chrome less stable, and it does not add BC texture support a chip lacks.
 
 While the game plays in Chrome, a **Game server running** notification keeps the server alive (Android would otherwise stop it in the background); its **Stop** button stops the server. The server also stops by itself when you close the app (swipe it away from recent apps) and when the game's Chrome tab has been closed for 5 minutes.
 
@@ -86,6 +88,8 @@ Torrent pieces, resume state, and verified extracted entries persist in the appl
 
 Automated checks use generated fixture torrents and local seeders, not public torrents.
 
+**Game options** sets how the game starts and runs, on every platform: start mode (ask, Story Mode, Sandbox Mode on either map) and new game, graphics profile (automatic, low memory, full), shadows in low memory, render scale, frame rate cap (60, 30, uncapped), the FPS counter, controller mode, touch controls, camera sensitivity, and skipping the device check. The launcher passes them to the game page as URL options (`?mode=`, `?low=`, `?scale=`, `?fps=`, `?showfps=`, `?pad=`, `?touch=`, `?padsens=`, `?nocheck=`), so they also work by hand in a browser.
+
 The game screen has buttons for **Launcher** (back), **Reload**, **Open in browser** and **Full screen**. You can switch the **Play in app** toggle off to always use the browser instead.
 
 If the webview can't run the game, a banner appears with an Open in browser button. The app remembers the source choice, separate values for each source, port, and play mode. Saved folder settings from earlier versions remain usable. If the port is busy, it uses a free one and shows the address.
@@ -100,7 +104,7 @@ The launcher drives the game's own gamepad support through engine memory for bui
 
 ### Touch controls
 
-On phones and tablets an on-screen gamepad appears once the game world is up, and the game treats it as a controller (controller prompts, wheels, vehicles):
+On the start screen, tap **Story Mode** or **Sandbox Mode** (the buttons are enlarged on touch screens), or set the start mode in **Game options**. On phones and tablets an on-screen gamepad appears once the game world is up, and the game treats it as a controller (controller prompts, wheels, vehicles); menus that want Enter take **A**:
 
 - **Left side:** a move stick appears where your thumb lands.
 - **Right side:** drag to look around.

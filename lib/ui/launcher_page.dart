@@ -12,13 +12,17 @@ import 'package:url_launcher/url_launcher.dart';
 import '../server/mirror_server.dart';
 import '../server/site_files.dart';
 import '../services/device.dart';
+import '../services/game_options.dart';
 import '../services/in_app_support.dart';
 import '../services/mirror_validator.dart';
 import '../services/server_service.dart';
 import '../services/settings.dart';
 import '../services/source_manager.dart';
+import '../services/storage_access.dart';
 import '../sources/mirror_source.dart';
 import '../sources/source_selection.dart';
+import 'folder_browser.dart';
+import 'game_options_dialog.dart';
 import 'game_page.dart';
 
 class LauncherPage extends StatefulWidget {
@@ -62,6 +66,7 @@ class _LauncherPageState extends State<LauncherPage> {
   bool _clearingCache = false;
   bool _disposed = false;
   bool _playInApp = true;
+  GameOptions _gameOptions = GameOptions.defaults;
   int? _cacheBytes;
   String? _error;
 
@@ -116,6 +121,7 @@ class _LauncherPageState extends State<LauncherPage> {
       }
       final port = await widget.settings.port();
       final playInApp = await widget.settings.playInApp();
+      final gameOptions = await widget.settings.gameOptions();
       if (!mounted) return;
       setState(() {
         _sourceKind = kind == SourceKind.magnet && !TorrentEngine.isSupported
@@ -126,6 +132,7 @@ class _LauncherPageState extends State<LauncherPage> {
         if (path != null && path.isNotEmpty) _setPicked(path);
         _portController.text = '$port';
         _playInApp = playInApp;
+        _gameOptions = gameOptions;
       });
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not load settings: $e');
@@ -140,9 +147,9 @@ class _LauncherPageState extends State<LauncherPage> {
     _sourceValues[SourceKind.local] = path;
   }
 
-  /// Android has no folder picker that gives a file path, so the game data
-  /// goes into the app's own folder on the device storage (copied over USB or
-  /// with `adb push`); "Check again" looks there.
+  /// The app's own folder on the device storage: readable without any
+  /// permission, used when "All files access" is refused (the game data is
+  /// copied there over USB or with `adb push`).
   Future<String?> _androidGameFolder() async {
     final base = await getExternalStorageDirectory();
     if (base == null) return null;
@@ -151,16 +158,64 @@ class _LauncherPageState extends State<LauncherPage> {
     return dir.path;
   }
 
+  /// Android: the system folder picker gives no file path, so the launcher
+  /// asks for "All files access" and offers its own folder browser; without
+  /// the permission it falls back to the app's own folder.
+  Future<String?> _chooseAndroidFolder() async {
+    if (!await StorageAccess.has()) {
+      if (!mounted) return null;
+      final allow = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Allow access to your files'),
+          content: const Text(
+            'To use game data from any folder on this device, allow "All files access" for playgta5 Launcher on the next screen. '
+            'It only reads the folder you choose. Without it, the launcher can only use its own folder.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Use app folder'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Allow'),
+            ),
+          ],
+        ),
+      );
+      if (allow == null) return null;
+      if (!allow || !await StorageAccess.request()) {
+        final path = await _androidGameFolder();
+        if (path != null && resolveMirrorRoot(path) == null) {
+          _appendLog(
+            'Copy the playgta5.com folder into $path (over USB, or adb push), then press Choose… again.',
+          );
+        }
+        return path;
+      }
+    }
+    final roots = await StorageAccess.roots();
+    if (roots.isEmpty || !mounted) return null;
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => FolderBrowser(
+          roots: roots,
+          // Start where the last pick was, unless that was the app's own
+          // fallback folder: then at the top of the storage.
+          initial: _pickedPath?.contains('/Android/data/') ?? true
+              ? null
+              : _pickedPath,
+        ),
+      ),
+    );
+  }
+
   Future<void> _chooseFolder() async {
     if (Platform.isAndroid) {
-      final path = await _androidGameFolder();
+      final path = await _chooseAndroidFolder();
       if (path == null || !mounted || _busy || _running) return;
       setState(() => _setPicked(path));
-      if (_mirrorRoot == null) {
-        _appendLog(
-          'Copy the playgta5.com folder into $path (over USB, or adb push), then press Check again.',
-        );
-      }
       try {
         await widget.settings.setSourceValue(SourceKind.local, path);
       } catch (e) {
@@ -399,7 +454,22 @@ class _LauncherPageState extends State<LauncherPage> {
     }
   }
 
+  Future<void> _editGameOptions() async {
+    final options = await showDialog<GameOptions>(
+      context: context,
+      builder: (_) => GameOptionsDialog(initial: _gameOptions),
+    );
+    if (options == null || !mounted) return;
+    setState(() => _gameOptions = options);
+    try {
+      await widget.settings.setGameOptions(options);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not save game options: $e');
+    }
+  }
+
   Future<void> _openInApp(Uri url) async {
+    url = _gameOptions.apply(url);
     final toBrowser = await Navigator.of(context).push(
       MaterialPageRoute<bool>(
         builder: (_) => GamePage(
@@ -416,6 +486,46 @@ class _LauncherPageState extends State<LauncherPage> {
       await _openBrowser(url);
     } else {
       await _stop();
+    }
+  }
+
+  /// Chrome hides WebGPU on graphics chips it has not approved (the page
+  /// then reports "no usable graphics adapter"); its "Unsafe WebGPU Support"
+  /// flag lifts that. Apps cannot open chrome:// pages, so this copies the
+  /// flag's address and opens Chrome for the player to paste it.
+  Future<void> _enableWebGpuHelp() async {
+    const flag = 'chrome://flags/#enable-unsafe-webgpu';
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Turn on WebGPU in Chrome'),
+        content: const Text(
+          'If the game says WebGPU found no usable graphics adapter, Chrome may be hiding WebGPU on this device.\n\n'
+          '1. Tap Copy and open Chrome.\n'
+          '2. Paste into the address bar and go.\n'
+          '3. Set "Unsafe WebGPU Support" to Enabled, then tap Relaunch.\n\n'
+          'This setting is experimental: Chrome may be less stable with it, and it does not add missing hardware '
+          'features (the game also needs BC texture support).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Copy and open Chrome'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await Clipboard.setData(const ClipboardData(text: flag));
+    _appendLog('Copied $flag: paste it into Chrome\'s address bar');
+    if (!await StorageAccess.openChrome() && mounted) {
+      setState(
+        () => _error = 'Chrome is not installed. Install it, then open $flag',
+      );
     }
   }
 
@@ -470,6 +580,7 @@ class _LauncherPageState extends State<LauncherPage> {
   }
 
   Future<void> _openBrowser(Uri url) async {
+    url = _gameOptions.apply(url);
     try {
       // Phones and tablets: the server's keep-alive service (and its
       // notification permission prompt) comes first, then the browser.
@@ -594,9 +705,6 @@ class _LauncherPageState extends State<LauncherPage> {
                         valid: _mirrorRoot != null,
                         enabled: !_running && !_busy,
                         onChoose: _chooseFolder,
-                        chooseLabel: Platform.isAndroid
-                            ? 'Check again'
-                            : 'Choose…',
                       )
                     else
                       TextField(
@@ -669,6 +777,16 @@ class _LauncherPageState extends State<LauncherPage> {
                             ),
                           ),
                         ),
+                        OutlinedButton.icon(
+                          key: const Key('game-options'),
+                          onPressed: _busy ? null : _editGameOptions,
+                          icon: const Icon(Icons.tune),
+                          label: Text(
+                            _gameOptions.query.isEmpty
+                                ? 'Game options'
+                                : 'Game options (${_gameOptions.query.length} set)',
+                          ),
+                        ),
                         if (widget.inApp.available)
                           Row(
                             mainAxisSize: MainAxisSize.min,
@@ -731,6 +849,16 @@ class _LauncherPageState extends State<LauncherPage> {
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    if (Platform.isAndroid)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          key: const Key('enable-webgpu'),
+                          onPressed: _enableWebGpuHelp,
+                          icon: const Icon(Icons.memory),
+                          label: const Text('Turn on WebGPU in Chrome'),
+                        ),
+                      ),
                     const SizedBox(height: 16),
                     Expanded(
                       child: DecoratedBox(
@@ -768,14 +896,12 @@ class _FolderRow extends StatelessWidget {
     required this.valid,
     required this.enabled,
     required this.onChoose,
-    required this.chooseLabel,
   });
 
   final String? pickedPath;
   final bool valid;
   final bool enabled;
   final VoidCallback onChoose;
-  final String chooseLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -816,7 +942,7 @@ class _FolderRow extends StatelessWidget {
         const SizedBox(width: 12),
         OutlinedButton(
           onPressed: enabled ? onChoose : null,
-          child: Text(chooseLabel),
+          child: const Text('Choose…'),
         ),
       ],
     );

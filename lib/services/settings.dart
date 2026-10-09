@@ -1,8 +1,9 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../sources/source_selection.dart';
+import 'game_options.dart';
 
-/// Persists source choices, port and play mode between runs.
+/// Persists source choices, port, play mode and game options between runs.
 class Settings {
   Settings(this._prefs);
 
@@ -10,6 +11,7 @@ class Settings {
   static const _sourceKindKey = 'source_kind';
   static const _portKey = 'port';
   static const _playInAppKey = 'play_in_app';
+  static const _gameOptionsKey = 'game_options';
   static const defaultPort = 8000;
 
   final SharedPreferencesAsync _prefs;
@@ -45,4 +47,9 @@ class Settings {
 
   Future<bool> playInApp() async => await _prefs.getBool(_playInAppKey) ?? true;
   Future<void> setPlayInApp(bool value) => _prefs.setBool(_playInAppKey, value);
+
+  Future<GameOptions> gameOptions() async =>
+      GameOptions.fromJson(await _prefs.getString(_gameOptionsKey));
+  Future<void> setGameOptions(GameOptions options) =>
+      _prefs.setString(_gameOptionsKey, options.toJson());
 }
