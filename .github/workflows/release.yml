@@ -4,10 +4,22 @@ on:
   push:
     tags:
       - "v*"
+    # Builds on main only refresh the caches (shared with every branch and tag; a branch's own caches are not), never publish.
+    branches:
+      - main
+    paths:
+      - "packages/torrent_engine/**"
+      - "tool/release/**"
+      - ".github/actions/**"
+      - ".github/workflows/release.yml"
+      - "pubspec.lock"
+  # Weekly as well: runner images (and so the cache keys) change about once a week.
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish a draft release after verification (false only builds and uploads artifacts)."
+        description: "Builds: publish a draft release after verification (false only builds and uploads artifacts). With from_run: publish the release publicly (false makes it a draft)."
         type: boolean
         required: false
         default: false
@@ -15,9 +27,17 @@ on:
         description: "Release tag to create (e.g. v1.0.0). Leave empty to publish a manual-build-<run> draft."
         required: false
         default: ""
+      from_run:
+        description: "Publish the artifacts of this earlier Release run instead of building (its commit must have the same tree as the selected ref)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
   APP_NAME: playgta5_launcher
@@ -25,6 +45,7 @@ env:
 jobs:
   build-linux:
     name: Build Linux
+    if: ${{ !inputs.from_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -42,7 +63,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter --version
       - run: flutter config --enable-linux-desktop
@@ -62,6 +86,7 @@ jobs:
 
   build-macos:
     name: Build macOS
+    if: ${{ !inputs.from_run }}
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -107,7 +132,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter --version
       - run: flutter config --enable-macos-desktop
@@ -141,6 +169,7 @@ jobs:
 
   build-windows:
     name: Build Windows
+    if: ${{ !inputs.from_run }}
     runs-on: windows-latest
     timeout-minutes: 120
     env:
@@ -156,7 +185,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .dart_tool/native_dependencies/vcpkg
-          key: openssl-v1-windows-x64-static-MT-${{ env.CI_RUNNER_IMAGE }}-${{ hashFiles('.github/workflows/release.yml') }}
+          # Bump the version in this key whenever the vcpkg install command below changes.
+          key: openssl-v2-windows-x64-static-MT-${{ env.CI_RUNNER_IMAGE }}
 
       - name: Install static OpenSSL via vcpkg
         if: steps.openssl.outputs.cache-hit != 'true'
@@ -177,7 +207,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter --version
       - run: flutter config --enable-windows-desktop
@@ -215,6 +248,7 @@ jobs:
 
   build-android:
     name: Build Android
+    if: ${{ !inputs.from_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -230,7 +264,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter --version
       - run: flutter pub get
@@ -272,6 +309,60 @@ jobs:
           draft: ${{ github.ref_type != 'tag' }}
           prerelease: false
           generate_release_notes: true
+          # Same list in publish-from-run below.
+          files: |
+            dist/playgta5-launcher-linux-x64.tar.gz
+            dist/playgta5-launcher-macos-arm64.zip
+            dist/playgta5-launcher-windows-x64.zip
+            dist/playgta5-launcher-android.apk
+
+  # Publishes the artifacts of an earlier, verified Release run (e.g. the branch build of a merged PR) without rebuilding:
+  # only when that run succeeded and built exactly the tree of the selected ref.
+  publish-from-run:
+    name: Publish from run ${{ inputs.from_run }}
+    if: ${{ inputs.from_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the run built this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_RUN: ${{ inputs.from_run }}
+        run: |
+          read -r sha conclusion name < <(gh run view "$FROM_RUN" --json headSha,conclusion,workflowName --jq '"\(.headSha) \(.conclusion) \(.workflowName)"')
+          echo "run $FROM_RUN: $name, $conclusion, commit $sha"
+          [ "$name" = "Release" ] || { echo "::error::run $FROM_RUN is not a Release run"; exit 1; }
+          [ "$conclusion" = "success" ] || { echo "::error::run $FROM_RUN did not succeed"; exit 1; }
+          git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch --no-tags origin "$sha"
+          built=$(git rev-parse "$sha^{tree}") here=$(git rev-parse "HEAD^{tree}")
+          [ "$built" = "$here" ] || { echo "::error::run $FROM_RUN built a different tree ($built) than $GITHUB_REF ($here)"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.from_run }}
+          github-token: ${{ github.token }}
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Publish binaries to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version != '' && inputs.version || format('manual-build-{0}', github.run_number) }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ !inputs.publish }}
+          prerelease: false
+          generate_release_notes: true
+          # Same list in release above.
+          fail_on_unmatched_files: true
           files: |
             dist/playgta5-launcher-linux-x64.tar.gz
             dist/playgta5-launcher-macos-arm64.zip
