@@ -23,9 +23,10 @@ Grab the latest binaries from [GitHub Releases](https://github.com/dev-gyata/gta
 | Windows (x64) | `playgta5-launcher-windows-x64.zip` | Extract the whole folder and run `playgta5_launcher.exe` |
 | macOS (arm64) | `playgta5-launcher-macos-arm64.zip` | Apple Silicon: unzip and move `playgta5_launcher.app` to Applications |
 | Linux (x64) | `playgta5-launcher-linux-x64.tar.gz` | Contents of `build/linux/x64/release/bundle/` — extract and run `playgta5_launcher` |
-| Android (phones and tablets) | `playgta5-launcher-android.apk` | Install the APK (allow installs from your browser or file manager). See [Phones and tablets](#phones-and-tablets) for requirements |
+| Android (phones and tablets) | `playgta5-launcher-android.apk` | Sideload the APK, see [Installing on Android](#installing-on-android) and [Phones and tablets](#phones-and-tablets) |
+| iPad / iPhone (iOS 26+) | `playgta5-launcher-ios-unsigned.ipa` | Unsigned: sideload it with your own Apple ID, see [Installing on iPad and iPhone](#installing-on-ipad-and-iphone) |
 
-Every `v*` tag (e.g. `v1.0.0`) builds all four binaries in CI and attaches them to that tag's release. Manual runs from the Actions tab build and upload artifacts without publishing by default; enable `publish` explicitly to publish a draft release.
+Every `v*` tag (e.g. `v1.0.0`) builds all five binaries in CI and attaches them to that tag's release. Manual runs from the Actions tab build and upload artifacts without publishing by default; enable `publish` explicitly to publish a draft release.
 
 The site's web files (`index.html`, `loader.js`, `game.js`, the workers and manifests) come with the launcher in `site/`. No game engine or game data is included or distributed with the launcher. To play, point it at a local folder, HTTP mirror, or torrent of files you are entitled to use, containing `playgta5.com/b/8b0b5899ed/game.wasm` and `playgta5.com/data/`. Wherever a file exists in both places, the launcher's copy in `site/` is used.
 
@@ -57,7 +58,7 @@ The app needs GTK 3 runtime libraries, typically installed on desktop distributi
 
 The Android app runs the same game server on the device and opens the game in Chrome. Android's built-in WebView cannot give the game the shared memory it needs. Whether a phone or tablet can actually run the game depends on its hardware, and most phones today cannot:
 
-- Chrome 133 or newer (64-bit WebAssembly and WebGPU).
+- A current Chrome with WebGPU. The game runs as a 32-bit build on Android (converted once on first start, then cached): it is steadier and a little faster than the 64-bit one.
 - A graphics chip with WebGPU **BC texture support** (`texture-compression-bc`). The game's textures are stored in that format, and most phone GPUs (Adreno, Mali) don't support it; some high-end tablets do.
 - About 8 GB of RAM: the game reserves 3 GB at start.
 - About 20 GB of free storage for the game data.
@@ -70,7 +71,34 @@ If the game says *WebGPU found no usable graphics adapter*, Chrome may be hiding
 
 While the game plays in Chrome, a **Game server running** notification keeps the server alive (Android would otherwise stop it in the background); its **Stop** button stops the server. The server also stops by itself when you close the app (swipe it away from recent apps) and when the game's Chrome tab has been closed for 5 minutes.
 
-iPhone and iPad are not supported yet: as far as we know, Safari's engine (used by every iOS browser) does not support the 64-bit WebAssembly the game needs.
+#### iPad and iPhone
+
+The iOS app runs the game server on the device and plays the game inside the app (iOS suspends apps in the background, so the game cannot be moved to Safari). Every iOS browser and in-app view uses Apple's WebKit, which has no 64-bit WebAssembly: on first start the game page converts `game.wasm` to 32-bit memory with the bundled binaryen.js (about 15 seconds to a minute, once; the result is cached), then runs it. The same path makes the game work in Safari on a Mac. Your game files are not modified. Requirements:
+
+- iOS/iPadOS 26 or newer (WebGPU in WebKit).
+- An M-series iPad (iPad Pro or Air) is the realistic target: BC textures and about 8 GB of memory (the game uses about 3 GB of its 4 GB limit). Phones and older iPads will most likely run out of memory.
+
+Sources are **HTTP** and **Local**. For Local, either press **Choose…** and pick the folder that holds `playgta5.com` (on the device, iCloud Drive or a USB drive; the launcher remembers it), or copy `playgta5.com` into **On My iPad › playgta5 Launcher › game** with the Files app or with Finder on a Mac (iPad selected › Files), which the launcher uses by default.
+
+#### Installing on Android
+
+1. Download `playgta5-launcher-android.apk` on the device (or copy it over).
+2. Open it; Android asks to allow installing apps from that source (your browser or file manager): allow it, then tap **Install**.
+3. Updates install the same way over the existing app.
+
+#### Installing on iPad and iPhone
+
+The iOS download is **unsigned**: Apple only lets signed apps run, so you sign it with your own Apple ID while installing. With a free Apple ID the app must be re-signed every 7 days (at most 3 such apps at a time); a paid Apple Developer account ($99/year) makes it last a year.
+
+With **Sideloadly** (Mac or Windows):
+1. Install [Sideloadly](https://sideloadly.io) and connect the iPad with a cable (tap **Trust** on the iPad).
+2. Drag `playgta5-launcher-ios-unsigned.ipa` into Sideloadly, enter your Apple ID, and press **Start**.
+3. On the iPad, turn on **Settings › Privacy & Security › Developer Mode** (it restarts), then trust your Apple ID under **Settings › General › VPN & Device Management**.
+4. Open **playgta5 Launcher**. Repeat step 2 within 7 days with a free Apple ID.
+
+With **AltStore** (refreshes the 7-day signing over Wi-Fi): install AltServer on your Mac or PC as described at [altstore.io](https://altstore.io), install AltStore on the iPad from it, then in AltStore **My Apps › +** open the `.ipa`. Developer Mode and trusting your Apple ID work as above.
+
+If you have a paid developer account, you can also build and install it yourself from this repository: `cd ios && open Runner.xcworkspace`, choose your team under **Signing & Capabilities**, select the iPad and press Run.
 
 macOS builds and startup have been checked locally. Windows and Linux build/runtime verification still require their respective hosts; the release workflow is configured to build them.
 

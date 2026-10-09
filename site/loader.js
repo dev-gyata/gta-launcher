@@ -46,7 +46,7 @@ self.onmessage = (ev) => {
 			instantiateWasm: (imports, done) => {
 				// Streaming compilation: the module compiles while it downloads (no compile wait after the download, no 2 x 63 MB buffer copy, and Chrome can cache the
 				// compiled code of a fetched response for the next visit). Progress is counted on a clone of the response. Any failure falls back to download-then-compile.
-				const buffered = async () => {
+				const download = async () => {
 					const res = await fetchWasm();
 					const total = +(res.headers.get('X-Uncompressed-Length') || res.headers.get('Content-Length')) || 0;
 					const reader = res.body.getReader(), chunks = [];
@@ -61,8 +61,32 @@ self.onmessage = (ev) => {
 					const bytes = new Uint8Array(got);
 					let o = 0;
 					for (const c of chunks) { bytes.set(c, o); o += c.length; }
+					return bytes;
+				};
+				const buffered = async () => {
+					const bytes = await download();
 					bc.postMessage({ pct: 20, label: 'Compiling the engine' });
 					return WebAssembly.instantiate(bytes, imports);
+				};
+				// WebKit (Safari and every iOS browser) has no WebAssembly memory64: game.wasm is lowered to 32-bit memory with binaryen.js
+				// (memory64-lowering: 32-bit memory and table, addresses wrapped; ~15 s and ~1 GB once) and kept in the Cache API per build and binaryen
+				// version, so later starts compile it directly. game.js runs in the matching mode (MEM32).
+				const lowered = async () => {
+					const key = self.location.origin + B + '/game.mem32.wasm?binaryen=132';
+					let cache = null;
+					try { cache = await caches.open('game-mem32'); } catch (e) { /* no Cache API: convert every time */ }
+					const hit = cache && await cache.match(key).catch(() => null);
+					if (hit) return new Uint8Array(await hit.arrayBuffer());
+					const bytes = await download();
+					bc.postMessage({ pct: 20, label: 'Preparing the engine for this browser (once, about a minute)' });
+					const binaryen = (await import(self.location.origin + B + '/binaryen.js')).default;
+					const mod = binaryen.readBinary(bytes);
+					mod.setFeatures(binaryen.Features.All & ~binaryen.Features.CompactImports);		// WebKit cannot read the compact import encoding
+					mod.runPasses(['memory64-lowering']);
+					const out = mod.emitBinary();
+					mod.dispose();
+					if (cache) await cache.put(key, new Response(out, { headers: { 'Content-Type': 'application/wasm' } })).catch(() => {});
+					return out;
 				};
 				const streaming = async () => {
 					const res = await fetchWasm();
@@ -82,8 +106,14 @@ self.onmessage = (ev) => {
 				};
 				(async () => {
 					let r;
-					try { r = await streaming(); }
-					catch (e) { console.warn('streaming instantiation failed (' + e + '): downloading first'); r = await buffered(); }
+					if (m.mem32) {
+						const bytes = await lowered();
+						bc.postMessage({ pct: 21, label: 'Compiling the engine' });
+						r = await WebAssembly.instantiate(bytes, imports);
+					} else {
+						try { r = await streaming(); }
+						catch (e) { console.warn('streaming instantiation failed (' + e + '): downloading first'); r = await buffered(); }
+					}
 					bc.postMessage({ pct: 22, label: 'Starting the engine' });
 					done(r.instance, r.module);
 				})().catch((e) => { bc.postMessage({ error: 'engine download failed: ' + e }); });
@@ -98,7 +128,7 @@ self.onmessage = (ev) => {
 			wgpuShaderUrl: B + '/shaders',
 			wgpuShotEvery: m.shotEvery,
 			keepThreads: m.keepThreads|0,		// bit mask of engine thread groups that are NOT skipped (1 replay, 2 net, 4 bink), see ipc_wasm.cpp
-			mainScriptUrlOrBlob: B + '/game.js' + ((m.fullConsole || m.remoteLog) ? '?' + [m.fullConsole ? 'console=1' : '', m.remoteLog ? 'log=1' : ''].filter(Boolean).join('&') : ''),		// pthreads read both from it, and take game.wasm's folder from it
+			mainScriptUrlOrBlob: B + '/game.js' + ((m.fullConsole || m.remoteLog || m.mem32) ? '?' + [m.fullConsole ? 'console=1' : '', m.remoteLog ? 'log=1' : '', m.mem32 ? 'mem32=1' : ''].filter(Boolean).join('&') : ''),		// pthreads read both from it, and take game.wasm's folder from it
 			locateFile: (p) => B + '/' + p,
 			onExit: (code) => { console.error('EXIT ' + code); self.__log('EXIT ' + code); self.__logFlush(); if (code) self.__crash('exit', 'EXIT ' + code); },
 			onAbort: (what) => { console.error('ABORT ' + what); self.__log('ABORT ' + what); self.__logFlush(); self.__crash('abort', 'ABORT ' + what); },
@@ -140,6 +170,7 @@ self.onmessage = (ev) => {
 		};
 		// __log/__logFlush come from prejs.js, which only exists once game.js is loaded: note the start line in the console.
 		console.log('loader: starting engine: ' + m.args.join(' ') + ' (cores ' + m.cores + ')');
+		self.__mem32 = !!m.mem32;		// game.js on this thread: the lowered build (its pthreads read ?mem32=1 from their script URL)
 		importScripts(B + '/game.js');
 	};
 	gpu.onerror = (e) => console.error('gpu worker failed to load: ' + e.message);

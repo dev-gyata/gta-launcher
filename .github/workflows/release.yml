@@ -285,10 +285,50 @@ jobs:
           path: playgta5-launcher-android.apk
           if-no-files-found: error
 
+  build-ios:
+    name: Build iOS
+    if: ${{ !inputs.from_run }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
+
+      - run: flutter --version
+      - run: flutter pub get
+
+      # Unsigned: installing needs re-signing with the user's own Apple ID (AltStore, Sideloadly) until the project has a signing
+      # certificate. The torrent engine is desktop only and not built here.
+      - name: Build iOS release (unsigned)
+        env:
+          FLUTTER_XCODE_ARCHS: arm64
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p .dart_tool/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app .dart_tool/ipa/Payload/
+          (cd .dart_tool/ipa && zip -qr "$GITHUB_WORKSPACE/playgta5-launcher-ios-unsigned.ipa" Payload)
+          unzip -l playgta5-launcher-ios-unsigned.ipa | grep -q 'Payload/Runner.app/Info.plist'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-artifact
+          path: playgta5-launcher-ios-unsigned.ipa
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag' || inputs.publish == true
-    needs: [build-linux, build-macos, build-windows, build-android]
+    needs: [build-linux, build-macos, build-windows, build-android, build-ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -315,6 +355,7 @@ jobs:
             dist/playgta5-launcher-macos-arm64.zip
             dist/playgta5-launcher-windows-x64.zip
             dist/playgta5-launcher-android.apk
+            dist/playgta5-launcher-ios-unsigned.ipa
 
   # Publishes the artifacts of an earlier, verified Release run (e.g. the branch build of a merged PR) without rebuilding:
   # only when that run succeeded and built exactly the tree of the selected ref.
@@ -368,3 +409,4 @@ jobs:
             dist/playgta5-launcher-macos-arm64.zip
             dist/playgta5-launcher-windows-x64.zip
             dist/playgta5-launcher-android.apk
+            dist/playgta5-launcher-ios-unsigned.ipa

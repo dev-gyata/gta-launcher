@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders assets/branding/logo.svg into the macOS, Windows and Android app icons and docs/logo.png.
+# Renders assets/branding/logo.svg into the macOS, Windows, Android and iOS app icons and docs/logo.png.
 # macOS only (uses Google Chrome headless to rasterise the SVG and sips to resize); no other dependencies.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -30,6 +30,13 @@ render "$work/macos.html" "$work/macos.png"
 grep -v 'url(#tile)\|url(#rim)' "$svg" > "$work/mark.svg"
 page "$work/android.html" 'left:0;top:0;width:1024px;height:1024px' "$work/mark.svg"
 render "$work/android.html" "$work/android_fg.png"
+# iOS: a full square with no transparency (iOS rounds the corners itself): the tile's gradient edge to edge and the mark at the tile's scale.
+cat > "$work/ios.html" <<EOF
+<!doctype html><html><body style="margin:0;width:1024px;height:1024px;background:linear-gradient(#1b3423,#0d1810)">
+<img src="file://$work/mark.svg" style="position:absolute;display:block;left:-36px;top:-36px;width:1096px;height:1096px"></body></html>
+EOF
+render "$work/ios.html" "$work/ios.png"
+sips -s format jpeg -s formatOptions 100 "$work/ios.png" --out "$work/ios.jpg" >/dev/null		# drops the alpha channel
 
 icons="$repo/macos/Runner/Assets.xcassets/AppIcon.appiconset"
 for size in 16 32 64 128 256 512 1024; do
@@ -62,5 +69,14 @@ for d in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do
   sips -s format png -z "$fg" "$fg" "$work/android_fg.png" --out "$res/mipmap-$name/ic_launcher_foreground.png" >/dev/null
 done
 
+ios_icons="$repo/ios/Runner/Assets.xcassets/AppIcon.appiconset"
+python3 -I - "$ios_icons/Contents.json" <<'EOF' | while read -r px name; do
+import json, sys
+for i in json.load(open(sys.argv[1]))['images']:
+    print(round(float(i['size'].split('x')[0]) * int(i['scale'][:-1])), i['filename'])
+EOF
+  sips -s format png -z "$px" "$px" "$work/ios.jpg" --out "$ios_icons/$name" >/dev/null
+done
+
 sips -s format png -z 256 256 "$work/full.png" --out "$repo/docs/logo.png" >/dev/null
-echo "Icons written: $icons, windows/runner/resources/app_icon.ico, $res/mipmap-*, docs/logo.png"
+echo "Icons written: $icons, windows/runner/resources/app_icon.ico, $res/mipmap-*, $ios_icons, docs/logo.png"

@@ -12,6 +12,7 @@ class Settings {
   static const _portKey = 'port';
   static const _playInAppKey = 'play_in_app';
   static const _gameOptionsKey = 'game_options';
+  static const _localBookmarkKey = 'local_bookmark';
   static const defaultPort = 8000;
 
   final SharedPreferencesAsync _prefs;
@@ -52,4 +53,10 @@ class Settings {
       GameOptions.fromJson(await _prefs.getString(_gameOptionsKey));
   Future<void> setGameOptions(GameOptions options) =>
       _prefs.setString(_gameOptionsKey, options.toJson());
+
+  /// iOS: the security-scoped bookmark of the picked mirror folder.
+  Future<String?> localBookmark() => _prefs.getString(_localBookmarkKey);
+  Future<void> setLocalBookmark(String? bookmark) => bookmark == null
+      ? _prefs.remove(_localBookmarkKey)
+      : _prefs.setString(_localBookmarkKey, bookmark);
 }
