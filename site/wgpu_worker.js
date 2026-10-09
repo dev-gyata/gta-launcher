@@ -373,6 +373,32 @@ async function packShader(rec) {
 	const dec = packDecoder || (packDecoder = new TextDecoder());
 	return { text: dec.decode(u8.subarray(off, off + wl)), consts: cl ? JSON.parse(dec.decode(u8.subarray(off + wl, off + wl + cl))) : null };
 }
+// WebKit (Safari, every iOS browser) cannot compile a vertex shader that returns its output struct with a constructor taking the clip-distance
+// array: its WGSL -> Metal translation puts the array into a brace initializer ("no matching constructor for initialization of 'typeN'", 500
+// shaders, among them the main scene's _DOF variants: a black world). Same output, built member by member and the clip distances element by element.
+const isWebKit = !isNode && /AppleWebKit/.test(self.navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(self.navigator.userAgent);
+function fixClipReturn(text) {
+	if (!text.includes('@builtin(clip_distances)')) return text;
+	const sm = /struct (\w+) \{([^}]*@builtin\(clip_distances\)[^}]*)\}/.exec(text);
+	if (!sm) return text;
+	const members = [];
+	for (const line of sm[2].split('\n')) {
+		const m = /^\s*(\w+)\s*:\s*(.+?),?\s*$/.exec(line);
+		if (m) members.push({ name: m[1], len: (/^array<f32,\s*(\d+)u?>$/.exec(m[2].trim()) || [])[1] });
+	}
+	const rm = new RegExp('return ' + sm[1] + '\\(([^;]*)\\);').exec(text);
+	if (!rm) return text;
+	const args = []; let depth = 0, cur = '';
+	for (const ch of rm[1]) { if (ch === '(' || ch === '<') depth++; if (ch === ')' || ch === '>') depth--; if (ch === ',' && depth === 0) { args.push(cur.trim()); cur = ''; } else cur += ch; }
+	if (cur.trim()) args.push(cur.trim());
+	if (args.length !== members.length) return text;
+	let out = 'var tint_clip_out : ' + sm[1] + ';\n';
+	members.forEach((mb, i) => {
+		if (mb.len) for (let k = 0; k < +mb.len; k++) out += '  tint_clip_out.' + mb.name + '[' + k + 'u] = (' + args[i] + ')[' + k + 'u];\n';
+		else out += '  tint_clip_out.' + mb.name + ' = ' + args[i] + ';\n';
+	});
+	return text.replace(rm[0], out + '  return tint_clip_out;');
+}
 // A shader's sources (WGSL, constant table); sh.fetched is set only when they are here (null: none). Started at most once per shader.
 function fetchShaderSource(sh) {
 	if (!sh.fetchP) sh.fetchP = (async () => {
@@ -392,6 +418,7 @@ function fetchShaderSource(sh) {
 					fetched = { text, consts };
 				} catch (e) { logOnce('shaderfetch' + sh.hash, 'shader ' + sh.hash + ' could not be fetched: ' + (e && e.message)); }
 			}
+			if (fetched && isWebKit) fetched.text = fixClipReturn(fetched.text);
 			if (fetched) fetchedByHash.set(sh.hash, fetched);
 		}
 		sh.fetched = fetched;
@@ -1008,6 +1035,9 @@ function bindGroupLayoutFor(prog, stage, group) {
 	return bgl;
 }
 const emptyBgl = () => emptyBgl.v || (emptyBgl.v = device.createBindGroupLayout({ entries: [] }));
+// Bound in place of a group the shaders do not use: every pipeline layout has two (emptyBgl for an unused one), and WebKit rejects a draw unless every group
+// of the layout is set (Chrome accepts an unset empty one). Rejected draws invalidated the whole command encoder in Safari: a black world.
+const emptyBg = () => emptyBg.v || (emptyBg.v = device.createBindGroup({ layout: emptyBgl(), entries: [] }));
 
 function depthStencilFor(dss, dsFormat, roDepth, roStencil) {
 	if (!dsFormat) return undefined;
@@ -1740,7 +1770,9 @@ function doDraw(p) {
 	if (vsProg.groupBindings[0] && !g0) { skipDraw('if (vsProg.groupBindings[0] && !g0) { skippedDraws++; return'); return; }
 	if (psProg && psProg.groupBindings[1] && !g1) { skipDraw('if (psProg && psProg.groupBindings[1] && !g1) { skippedDraws'); return; }
 	if (g0) { const d = g0.dyn.length ? g0.dyn[0] : -1; if (passSt.bg0 !== g0.bg || passSt.dyn0 !== d) { setBG(pass, 0, g0); passSt.bg0 = g0.bg; passSt.dyn0 = d; } }
+	else if (passSt.bg0 !== emptyBg()) { pass.setBindGroup(0, emptyBg()); passSt.bg0 = emptyBg(); passSt.dyn0 = -1; }
 	if (g1) { const d = g1.dyn.length ? g1.dyn[0] : -1; if (passSt.bg1 !== g1.bg || passSt.dyn1 !== d) { setBG(pass, 1, g1); passSt.bg1 = g1.bg; passSt.dyn1 = d; } }
+	else if (passSt.bg1 !== emptyBg()) { pass.setBindGroup(1, emptyBg()); passSt.bg1 = emptyBg(); passSt.dyn1 = -1; }
 	// vertex / index buffers (baseVertex and startInstance are folded into the buffer offsets: SV_VertexID is zero based)
 	const indexed = kind === 4 || (kind < 4 && (kind & 1) !== 0);
 	// D3D's SV_VertexID / SV_InstanceID do not include the draw's base vertex / start instance (and this port treats StartVertexLocation the same); WebGPU's vertex_index / instance_index

@@ -14,6 +14,9 @@ const siteFiles = {
   '$buildPath/wgpu_worker.js': 'wgpu_worker.js',
   '/data/manifest.json': 'data-manifest.json',
   '$buildPath/shaders/index.json': 'shader-index.json',
+  // binaryen.js 132.0.0 (Apache-2.0, site/binaryen.LICENSE): loader.js lowers game.wasm to 32-bit memory with it
+  // for browsers without WebAssembly memory64 (WebKit: Safari, iOS).
+  '$buildPath/binaryen.js': 'binaryen.js',
 };
 
 /// Loads every entry of [siteFiles] with [read], which receives the file
