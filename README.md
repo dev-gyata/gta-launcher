@@ -132,7 +132,7 @@ OpenSSL paths are configured under `hooks.user_defines.torrent_engine` in the ro
 
 ### Releasing a new version
 
-CI (`.github/workflows/release.yml`, Flutter stable) builds Windows, macOS (arm64) and Linux (x64) on their own runners and publishes the archives to [GitHub Releases](https://github.com/dev-gyata/gta-launcher/releases):
+CI (`.github/workflows/release.yml`, Flutter stable) builds Windows, macOS (arm64), Linux (x64) and Android on their own runners and publishes the archives to [GitHub Releases](https://github.com/dev-gyata/gta-launcher/releases):
 
 ```
 # 1. Bump `version:` in pubspec.yaml and commit
@@ -141,7 +141,11 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Pushing a `v*` tag creates (or updates) that tag's release with the three binaries and auto-generated notes. To test without tagging, run the workflow from the Actions tab: leave `publish` disabled to verify all desktop builds without creating a release. Enable it only when you intend to publish a draft; `version` optionally selects its tag, otherwise the draft uses `manual-build-<run>`. Windows/macOS native integration and bundle compatibility checks run before packaging, and both extracted archives are checked. The Foundation plugin is constrained below 2.6 to avoid Flutter's macOS 13 native-asset minimum.
+Pushing a `v*` tag creates (or updates) that tag's release with the four binaries and auto-generated notes. To test without tagging, run the workflow from the Actions tab: leave `publish` disabled to verify all desktop builds without creating a release. Enable it only when you intend to publish a draft; `version` optionally selects its tag, otherwise the draft uses `manual-build-<run>`. Windows/macOS native integration and bundle compatibility checks run before packaging, and both extracted archives are checked. The Foundation plugin is constrained below 2.6 to avoid Flutter's macOS 13 native-asset minimum.
+
+To publish a build that already ran, without rebuilding (for example the branch build of a PR you just merged), run the workflow on `main` with `from_run` set to that run's ID, `version` set to the new tag and `publish` enabled (disabled makes a draft). It only publishes if that run succeeded and built exactly the same files as the selected branch.
+
+Build caches: the compiled torrent engine and OpenSSL are cached per runner image and keyed only on what changes them (the engine's sources and build scripts). GitHub shares a branch's caches only with that branch, so the build jobs also run on `main` when native code or the workflow changes, and weekly, to keep warm caches that every branch and tag can use. The Flutter SDK is downloaded, not cached (its 2 GB caches crowded the 10 GB limit).
 
 ## Development
 

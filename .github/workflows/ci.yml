@@ -21,7 +21,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter --version
       - run: flutter pub get
@@ -55,7 +58,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - name: Set up Node (for worker cache test)
         uses: actions/setup-node@v4
@@ -84,7 +90,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Cache pub packages
+        uses: ./.github/actions/cache-pub
 
       - run: flutter pub get
       - run: flutter build apk --debug

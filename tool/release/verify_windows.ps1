@@ -14,7 +14,7 @@ function Invoke-Checked([string] $Program, [string[]] $Arguments) {
     }
 }
 Invoke-Checked cmake @('-S', "$repo/packages/torrent_engine/native", '-B', $native, '-A', 'x64', '-DTE_BUILD_TESTS=ON', "-DOPENSSL_ROOT_DIR=$openssl", '-DOPENSSL_MSVC_STATIC_RT=TRUE')
-Invoke-Checked cmake @('--build', $native, '--config', 'Release', '--parallel', '4')
+Invoke-Checked cmake @('--build', $native, '--config', 'Release', '--parallel', $env:NUMBER_OF_PROCESSORS)
 # CMake places the fixture in Release and the engine DLL in lib.
 $env:PATH = "$native/lib;$env:PATH"
 $env:TORRENT_ENGINE_FIXTURE = "$native/Release/torrent_engine_integration.exe"

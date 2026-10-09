@@ -8,9 +8,11 @@ runs:
       run: |
         echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
         echo "CI_RUNNER_IMAGE=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+    # Keyed only on what changes the compiled output: the engine's sources and CMake setup, the scripts that pass it CMake
+    # flags, and the runner image (compiler). Not the app's pubspec.yaml (version bumps) or the workflow files.
     - uses: actions/cache@v4
       with:
         path: packages/torrent_engine/.dart_tool/native_build
-        key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh', '.github/workflows/release.yml') }}-${{ hashFiles('packages/torrent_engine/native/*.cpp', 'packages/torrent_engine/native/*.h') }}
+        key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh') }}-${{ hashFiles('packages/torrent_engine/native/*.cpp', 'packages/torrent_engine/native/*.h') }}
         restore-keys: |
-          native-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh', '.github/workflows/release.yml') }}-
+          native-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('packages/torrent_engine/native/CMakeLists.txt', 'packages/torrent_engine/native/vendor/**', 'packages/torrent_engine/hook/**', 'packages/torrent_engine/lib/src/build_config.dart', 'packages/torrent_engine/pubspec.yaml', 'tool/release/build_openssl_macos.sh', 'tool/release/verify_windows.ps1', 'tool/release/verify_macos.sh') }}-
