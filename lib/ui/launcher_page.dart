@@ -82,7 +82,10 @@ class _LauncherPageState extends State<LauncherPage> {
 
   bool get _running => _server?.isRunning ?? false;
   bool get _busy => _loading || _starting || _stopping || _clearingCache;
-  bool get _useInApp => widget.inApp.available && _playInApp;
+  // iOS always plays in the app: it suspends an app in the background, so a
+  // game in Safari would lose its server.
+  bool get _useInApp =>
+      widget.inApp.available && (_playInApp || Platform.isIOS);
   bool get _canStart => _sourceKind == SourceKind.local
       ? _mirrorRoot != null
       : _sourceController.text.trim().isNotEmpty;
@@ -134,6 +137,7 @@ class _LauncherPageState extends State<LauncherPage> {
         _playInApp = playInApp;
         _gameOptions = gameOptions;
       });
+      if (Platform.isIOS) await _restoreIosFolder();
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not load settings: $e');
     } finally {
@@ -211,7 +215,45 @@ class _LauncherPageState extends State<LauncherPage> {
     );
   }
 
+  /// iOS: a folder picked earlier is only readable again through its saved
+  /// bookmark; without one, the app's Documents `game` folder (filled from
+  /// the Files app or Finder) is the default.
+  Future<void> _restoreIosFolder() async {
+    try {
+      final bookmark = await widget.settings.localBookmark();
+      final restored = bookmark == null
+          ? null
+          : await StorageAccess.resolveIosFolder(bookmark);
+      if (restored?.bookmark != null) {
+        await widget.settings.setLocalBookmark(restored!.bookmark);
+      }
+      final path = restored?.path ?? await StorageAccess.iosDocumentsFolder();
+      if (path == null || !mounted) return;
+      setState(() => _setPicked(path));
+      if (restored == null && _mirrorRoot == null) {
+        _appendLog(
+          'Copy the playgta5.com folder into On My iPad/iPhone > playgta5 Launcher > game (Files app, or Finder over USB), '
+          'or press Choose… to pick a folder.',
+        );
+      }
+    } catch (e) {
+      _appendLog('Could not restore the mirror folder: $e');
+    }
+  }
+
   Future<void> _chooseFolder() async {
+    if (Platform.isIOS) {
+      final picked = await StorageAccess.pickIosFolder();
+      if (picked == null || !mounted || _busy || _running) return;
+      setState(() => _setPicked(picked.path));
+      try {
+        await widget.settings.setSourceValue(SourceKind.local, picked.path);
+        await widget.settings.setLocalBookmark(picked.bookmark);
+      } catch (e) {
+        if (mounted) setState(() => _error = 'Could not save folder: $e');
+      }
+      return;
+    }
     if (Platform.isAndroid) {
       final path = await _chooseAndroidFolder();
       if (path == null || !mounted || _busy || _running) return;
@@ -787,7 +829,7 @@ class _LauncherPageState extends State<LauncherPage> {
                                 : 'Game options (${_gameOptions.query.length} set)',
                           ),
                         ),
-                        if (widget.inApp.available)
+                        if (widget.inApp.available && !Platform.isIOS)
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -807,11 +849,14 @@ class _LauncherPageState extends State<LauncherPage> {
                               icon: const Icon(Icons.sports_esports),
                               label: const Text('Play'),
                             ),
-                          OutlinedButton.icon(
-                            onPressed: _busy ? null : () => _openBrowser(url!),
-                            icon: const Icon(Icons.open_in_browser),
-                            label: const Text('Open in browser'),
-                          ),
+                          if (!Platform.isIOS)
+                            OutlinedButton.icon(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _openBrowser(url!),
+                              icon: const Icon(Icons.open_in_browser),
+                              label: const Text('Open in browser'),
+                            ),
                         ],
                         if (_running || (_starting && !_stopping))
                           FilledButton.tonalIcon(
@@ -841,7 +886,9 @@ class _LauncherPageState extends State<LauncherPage> {
                     const SizedBox(height: 4),
                     Text(
                       _useInApp
-                          ? 'The game opens in this window. If it does not run, use Open in browser with Chrome or Edge.'
+                          ? Platform.isIOS
+                                ? 'The game opens in this window. It needs iOS/iPadOS 26 and about 8 GB of memory (an M-series iPad).'
+                                : 'The game opens in this window. If it does not run, use Open in browser with Chrome or Edge.'
                           : Platform.isAndroid
                           ? 'The game opens in Chrome. It needs WebGPU and a graphics chip with BC texture support.'
                           : 'Use Chrome or Edge. The game needs WebGPU.',

@@ -4,7 +4,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 /// Whether the game can be shown in an embedded webview on this OS.
 ///
-/// macOS uses WKWebView. Windows uses WebView2, which must be installed (it
+/// macOS and iOS use WKWebView. Windows uses WebView2, which must be installed (it
 /// ships with Windows 10/11). Linux has no supported webview, and Android's
 /// WebView is never cross-origin isolated (no shared memory for the game, even
 /// with the server's COOP/COEP headers), so both use the browser.
@@ -20,7 +20,8 @@ class InAppSupport {
   final WebViewEnvironment? environment;
 
   static Future<InAppSupport> detect() async {
-    if (Platform.isMacOS) return const InAppSupport._(true, null);
+    // iOS/iPadOS: WKWebView. In-app is the only way there: iOS suspends an app in the background, so a game in Safari would lose its server.
+    if (Platform.isMacOS || Platform.isIOS) return const InAppSupport._(true, null);
     if (Platform.isAndroid) {
       return const InAppSupport._(false, "Android's WebView cannot run the game; it opens in Chrome");
     }

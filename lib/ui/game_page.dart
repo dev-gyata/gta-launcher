@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -60,12 +62,12 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _checkSupport(InAppWebViewController controller) async {
     try {
-      final result = await controller.evaluateJavascript(
-        source: 'self.crossOriginIsolated === true && !!navigator.gpu',
-      );
-      final supported = result == true;
+      final isolated = await controller.evaluateJavascript(source: 'self.crossOriginIsolated === true') == true;
+      final gpu = await controller.evaluateJavascript(source: '!!navigator.gpu') == true;
+      final supported = isolated && gpu;
       widget.onLog(
-        supported ? 'Webview: cross-origin isolated, WebGPU available' : 'Webview: missing isolation or WebGPU',
+        'Webview: ${isolated ? 'cross-origin isolated' : 'NOT cross-origin isolated'}, '
+        '${gpu ? 'WebGPU available' : 'no WebGPU'}',
       );
       if (mounted) setState(() => _supported = supported);
     } catch (e) {
@@ -80,7 +82,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _back() async {
-    if (await windowManager.isFullScreen()) await windowManager.setFullScreen(false);
+    if (isDesktop && await windowManager.isFullScreen()) await windowManager.setFullScreen(false);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -90,7 +92,8 @@ class _GamePageState extends State<GamePage> {
     return Scaffold(
       body: Column(
         children: [
-          if (isDesktop)
+          // iOS has no system back button: it keeps the toolbar (Launcher, Reload); Android uses the back gesture.
+          if (isDesktop || Platform.isIOS)
             Material(
               color: theme.colorScheme.surfaceContainer,
               child: SizedBox(
@@ -110,16 +113,18 @@ class _GamePageState extends State<GamePage> {
                       onPressed: () => _controller?.reload(),
                       icon: const Icon(Icons.refresh),
                     ),
-                    IconButton(
-                      tooltip: 'Open in browser',
-                      onPressed: _openInBrowser,
-                      icon: const Icon(Icons.open_in_browser),
-                    ),
-                    IconButton(
-                      tooltip: _fullScreen ? 'Exit full screen' : 'Full screen',
-                      onPressed: _toggleFullScreen,
-                      icon: Icon(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
-                    ),
+                    if (isDesktop)
+                      IconButton(
+                        tooltip: 'Open in browser',
+                        onPressed: _openInBrowser,
+                        icon: const Icon(Icons.open_in_browser),
+                      ),
+                    if (isDesktop)
+                      IconButton(
+                        tooltip: _fullScreen ? 'Exit full screen' : 'Full screen',
+                        onPressed: _toggleFullScreen,
+                        icon: Icon(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
+                      ),
                     const SizedBox(width: 4),
                   ],
                 ),
