@@ -116,7 +116,7 @@ Torrent pieces, resume state, and verified extracted entries persist in the appl
 
 Automated checks use generated fixture torrents and local seeders, not public torrents.
 
-**Game options** sets how the game starts and runs, on every platform: start mode (ask, Story Mode, Sandbox Mode on either map) and new game, graphics profile (automatic, low memory, full), shadows in low memory, render scale, frame rate cap (60, 30, uncapped), the FPS counter, controller mode, touch controls, camera sensitivity, and skipping the device check. The launcher passes them to the game page as URL options (`?mode=`, `?low=`, `?scale=`, `?fps=`, `?showfps=`, `?pad=`, `?touch=`, `?padsens=`, `?nocheck=`), so they also work by hand in a browser.
+**Game options** sets how the game starts and runs, on every platform: start mode (ask, Story Mode, Sandbox Mode on either map) and new game, graphics profile (automatic, low memory, full), shadows in low memory, render scale, frame rate cap (60, 30, uncapped), the FPS counter, controller mode, touch controls, camera sensitivity, skipping the device check, and the engine build (automatic, 64-bit, or 32-bit). The launcher passes them to the game page as URL options (`?mode=`, `?low=`, `?scale=`, `?fps=`, `?showfps=`, `?pad=`, `?touch=`, `?padsens=`, `?nocheck=`, `?mem32=`), so they also work by hand in a browser.
 
 The game screen has buttons for **Launcher** (back), **Reload**, **Open in browser** and **Full screen**. You can switch the **Play in app** toggle off to always use the browser instead.
 

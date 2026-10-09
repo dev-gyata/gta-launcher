@@ -30,6 +30,14 @@ enum ControllerMode {
   off,
 }
 
+/// Which build of the engine runs: 64-bit WebAssembly memory, or game.wasm lowered to 32-bit memory (converted once in the browser).
+enum EngineBuild {
+  /// 32-bit on Android and where 64-bit WebAssembly is missing (Safari, iOS); 64-bit elsewhere.
+  auto,
+  mem64,
+  mem32,
+}
+
 enum TouchControls {
   /// Phones and tablets only.
   auto,
@@ -52,6 +60,7 @@ class GameOptions {
     this.lookSensitivity = 1.0,
     this.touch = TouchControls.auto,
     this.skipDeviceCheck = false,
+    this.engineBuild = EngineBuild.auto,
   });
 
   final StartMode startMode;
@@ -75,6 +84,7 @@ class GameOptions {
 
   /// Start even when the page finds the device lacks something the game needs.
   final bool skipDeviceCheck;
+  final EngineBuild engineBuild;
 
   static const defaults = GameOptions();
 
@@ -97,6 +107,8 @@ class GameOptions {
     if (touch == TouchControls.on) 'touch': '1',
     if (touch == TouchControls.off) 'touch': '0',
     if (skipDeviceCheck) 'nocheck': '1',
+    if (engineBuild == EngineBuild.mem64) 'mem32': '0',
+    if (engineBuild == EngineBuild.mem32) 'mem32': '1',
   };
 
   /// [url] with these options as its query.
@@ -119,6 +131,7 @@ class GameOptions {
     double? lookSensitivity,
     TouchControls? touch,
     bool? skipDeviceCheck,
+    EngineBuild? engineBuild,
   }) => GameOptions(
     startMode: startMode ?? this.startMode,
     newGame: newGame ?? this.newGame,
@@ -131,6 +144,7 @@ class GameOptions {
     lookSensitivity: lookSensitivity ?? this.lookSensitivity,
     touch: touch ?? this.touch,
     skipDeviceCheck: skipDeviceCheck ?? this.skipDeviceCheck,
+    engineBuild: engineBuild ?? this.engineBuild,
   );
 
   String toJson() => jsonEncode({
@@ -145,6 +159,7 @@ class GameOptions {
     'lookSensitivity': lookSensitivity,
     'touch': touch.name,
     'skipDeviceCheck': skipDeviceCheck,
+    'engineBuild': engineBuild.name,
   });
 
   /// Unknown or missing values fall back to the defaults, so settings saved
@@ -176,6 +191,7 @@ class GameOptions {
       lookSensitivity: number('lookSensitivity', 1.0, 0.25, 3.0),
       touch: pick(TouchControls.values, 'touch', TouchControls.auto),
       skipDeviceCheck: flag('skipDeviceCheck'),
+      engineBuild: pick(EngineBuild.values, 'engineBuild', EngineBuild.auto),
     );
   }
 }

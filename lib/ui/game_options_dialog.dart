@@ -167,6 +167,15 @@ class _GameOptionsDialogState extends State<GameOptionsDialog> {
               (v) => _set(o.copyWith(lookSensitivity: v)),
             ),
             _heading('Advanced'),
+            _choice(
+              'Engine build',
+              o.engineBuild,
+              const {EngineBuild.auto: 'Automatic', EngineBuild.mem64: '64-bit', EngineBuild.mem32: '32-bit'},
+              (v) => _set(o.copyWith(engineBuild: v)),
+              help:
+                  'Automatic: 32-bit on Android, Safari and iPad/iPhone, 64-bit elsewhere. 32-bit is converted once on first start, '
+                  'then cached; it ran steadier in testing. Safari and iOS can only run 32-bit.',
+            ),
             _switch(
               'Skip the device check',
               o.skipDeviceCheck,
